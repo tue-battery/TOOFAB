@@ -5,7 +5,7 @@
 % Simulation of the DFN model
 % 
 % Inputs: 
-%    - input_current: Contains information about the current profile. This 
+%    - input: Contains information about the current profile. This 
 %      field can be provided either as a scalar representing the desired 
 %      applied current from time 0 to tf, an array which 
 %      contains the current levels at each specified sample time, or as a
@@ -13,7 +13,8 @@
 %      potentials, and the parameters as input and mainly provides the 
 %      current as output. The latter form is especially useful when the
 %      battery is desired to be controlled in closed-loop. Example 
-%      functions for input_current are provided with the toolbox.
+%      functions for input are provided with the toolbox. The temperature profile can also be added
+%      here, as a third column, if input current is not specified as a function. 
 %    - final_time specifies the simulation time in seconds
 %    - init_cond: Specifies the initial condition, which can be either an 
 %      initial state-of-charge, as a value between 0 and 1, an initial 
@@ -40,37 +41,40 @@
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-function out = DFN(input_current,final_time,init_cond,varargin)
+function out = DFN(input,final_time,init_cond,varargin)
 p = default_parameters();
-
 if nargin>3
     p = process_param(p,varargin{1}); 
 end
-
 if length(init_cond)>1
     p.ageing = 1;
 end
 par_or = p;
 time_max = final_time; 
-if isa(input_current,'function_handle')
+if isa(input,'function_handle')
     input_mode = 2; 
     i_app = 0; 
-elseif size(input_current,2)==2
+elseif size(input,2)==2
     input_mode = 1; 
-    F_current = griddedInterpolant(input_current(:,1),input_current(:,2),p.current_interp,p.current_extrap); 
+    F_current = griddedInterpolant(input(:,1),input(:,2),p.current_interp,p.current_extrap); 
     i_app = F_current(0); 
-elseif isscalar(input_current)
+elseif size(input,2)==3
+    input_mode = 1; 
+    F_current = griddedInterpolant(input(:,1),input(:,2),p.current_interp,p.current_extrap); 
+    i_app = F_current(0); 
+    input_temperature=input(:,3);
+elseif isscalar(input)
     input_mode = 0;
-    i_app = input_current;
+    i_app = input;
 else
-    error('input_current not specified correctly, please check the documentation for the proper specification of input_current')
+    error('input not specified correctly, please check the documentation for the proper specification of input')
 end
 % warning('on')
 warning('off','MATLAB:nearlySingularMatrix');
 warning('off','MATLAB:illConditionedMatrix');
 
 %% Define variables for simulation
-if nargin>3
+if nargin>4
     p = fcn_system_vectors(p,init_cond,varargin{1});
 else
     p = fcn_system_vectors(p,init_cond);
@@ -80,7 +84,7 @@ par_or.EMF = p.EMF; par_or.U_pos = p.U_pos_out; par_or.U_neg = p.U_neg_out;
 par_or.dU_pos = p.dU_pos; par_or.dU_neg = p.dU_neg; 
 par_or.cs_max_neg = p.cs_max_neg; par_or.cs_max_pos = p.cs_max_pos; 
 m.dummy = 0; 
-m = fcn_system_matrices(p,m);
+m = fcn_system_matrices(p,m,p.T_amb);
 
 [cs_prevt, ce_prevt, phis_prev,T_prevt,Cl_prevt,Rf] = init(p,m,init_cond);
 max_prealloc_size = 1e5;
@@ -144,16 +148,16 @@ while not(end_simulation)
     tic()
     dt_prev = p.dt;
     if input_mode==2
-        if nargout(input_current) == 4
-            [i_app(t+1),mem,end_simulation,dt_user] = input_current(t,t_vec(t),i_app,V,soc,cs,ce,phis,phie,mem,p); 
+        if nargout(input) == 4
+            [i_app(t+1),mem,end_simulation,dt_user] = input(t,t_vec(t),i_app,V,soc,cs,ce,phis,phie,mem,p); 
             if dt_user>=dt_or
                 dt_or = dt_user;
                 p.dt = dt_or;
             end
-        elseif nargout(input_current)==3
-            [i_app(t+1),mem,end_simulation] = input_current(t,t_vec(t),i_app,V,soc,cs,ce,phis,phie,mem,p);
+        elseif nargout(input)==3
+            [i_app(t+1),mem,end_simulation] = input(t,t_vec(t),i_app,V,soc,cs,ce,phis,phie,mem,p);
         else
-            error('input_current detected as a function handle, but does not have the required inputs and outputs defined.')
+            error('input detected as a function handle, but does not have the required inputs and outputs defined.')
         end
     end
     
@@ -173,16 +177,16 @@ while not(end_simulation)
     end
     t_vec(t+1) = t_vec(t)+p.dt; 
     if input_mode==0
-        i_app(t+1) = input_current;
+        i_app(t+1) = input;
     end
     if input_mode==1
         i_app(t+1) = F_current(t_vec(t+1));  
     end
     if(not(isequal(dt_prev,p.dt)))
-        m = fcn_system_matrices(p,m);
+        m = fcn_system_matrices(p,m,T_prevt);
     end
     
-    m = fcn_system_matrices2(p,m,cs_prevt,ce_prevt); 
+    m = fcn_system_matrices2(p,m,cs_prevt,ce_prevt,T_prevt); 
     
     if t_vec(t)==1823
         temp = 1;
@@ -255,6 +259,8 @@ while not(end_simulation)
     
     if p.thermal_dynamics
         T(t+1) = fcn_T(jn(:,t+1), U(:,t+1),stoich,V(t+1),i_app(t+1),T_prevt, p);
+    elseif exist('input_temperature','var')==1
+        T(t+1) = input_temperature(t); 
     else
         T(t+1) = p.T_amb; 
     end
@@ -421,13 +427,13 @@ ce_bar = m.Ace_bar*ce;
 cs_bar = m.Acs_bar*cs; 
 
 if p.set_simp(2)==0
-    m = De_matrices(ce,p.T_amb,p,m);
+    m = De_matrices(T,p,m);
     m.Theta_ce = -m.Ace_hat_inv*ce_prevt; 
     m.Theta_ce_bar = m.Ace_bar*m.Theta_ce;
 end
 
 if p.set_simp(4)==0
-    m = Ds_matrices(cs_bar(p.nn+1:end)/p.cs_max_pos,p.T_amb,p,m); 
+    m = Ds_matrices(T,p,m); 
     if p.set_simp(6)
         m.Theta_cs = -m.Acs_hat_inv*[cs_prevt(1:p.nnp);zeros(p.nnp,1)]; 
     else
@@ -710,7 +716,7 @@ end
 Closs = x_prev(5); 
 end
 
-function [ m ] = fcn_system_matrices( p,m )
+function [ m ] = fcn_system_matrices( p,m,T )
 %-------------------------------------------------------------------------%
 %- This function defines the system matrices that do not change in the ---%
 %- Inner loop. The matrices that do change in the inner loop are placed --%
@@ -722,7 +728,7 @@ if p.set_simp(6)
 else
 Acs_jn = sparse(fcn_Acs_j(p.nrn));
 m.Acs_jp = sparse(fcn_Acs_j(p.nrp));
-Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
 m.Acs_hat_n = p.dt*Acs_n-speye(p.nrn*p.nn);
 m.Acs_hat_inv_n = inv(m.Acs_hat_n); 
 
@@ -763,35 +769,35 @@ m.Aphie_bar = m.Ace_bar;
 m.Bphis_inv = inv(Bphis); 
 
 if p.set_simp(2)==2 || p.set_simp(2)==0
-    m = De_matrices(p.ce0,p.T_amb,p,m); 
+    m = De_matrices(T,p,m); 
 end
 
 if p.set_simp(4)==2 || p.set_simp(4)== 0
-    m = Ds_matrices(ones(p.np,1),p.T_amb,p,m); 
+    m = Ds_matrices(T,p,m); 
 end
 
 if p.set_simp(1)==2 || p.set_simp(1) == 0 
-    m = kappa_matrices(p.ce0,p.T_amb,p,m); 
-    m = nu_matrices(p.ce0,p.T_amb,p,m); 
+    m = kappa_matrices(p.ce0,T,p,m); 
+    m = nu_matrices(p.ce0,T,p,m); 
 end
 end
 
-function [ m ] = fcn_system_matrices2( p, m,cs_prevt, ce_prevt)
+function [ m ] = fcn_system_matrices2( p, m,cs_prevt, ce_prevt,T)
 %-------------------------------------------------------------------------%
 if p.set_simp(2)==1
-    m = De_matrices(ce_prevt,p.T_amb,p,m); 
+    m = De_matrices(T,p,m); 
 end
 
 if p.set_simp(4)==1
     cs_bar = m.Acs_bar*cs_prevt; 
-    m = Ds_matrices(cs_bar(p.nn+1:end)/p.cs_max_pos,p.T_amb,p,m); 
+    m = Ds_matrices(T,p,m); 
 end
 
 if p.set_simp(1)==1
-    m = kappa_matrices(ce_prevt,p.T_amb,p,m); 
-    m = nu_matrices(ce_prevt,p.T_amb,p,m); 
+    m = kappa_matrices(ce_prevt,T,p,m); 
+    m = nu_matrices(ce_prevt,T,p,m); 
 elseif p.set_simp(3)==1 && not(p.set_simp(1)==0)
-    m = nu_matrices(ce_prevt,p.T_amb,p,m); 
+    m = nu_matrices(ce_prevt,T,p,m); 
 end
 
 if p.set_simp(4)==1 || p.set_simp(4)==2 || p.set_simp(4)==0
@@ -808,8 +814,8 @@ if p.set_simp(2)==1 || p.set_simp(2)==2 || p.set_simp(2)==0
 end
 end 
 
-function m = De_matrices(ce,T,p,m)
-    m.Ace = sparse(fcn_Aw(p.De_eff(ce,T),p.eps_e.*p.dx,p.dx,p));
+function m = De_matrices(T,p,m)
+    m.Ace = sparse(fcn_Aw(p.De_eff(T),p.eps_e.*p.dx,p.dx,p));
     m.Ace_hat = (p.dt*m.Ace-speye(p.nx)); 
     m.Ace_hat_inv = inv(m.Ace_hat);
     prem2 = m.Ace_hat_inv*(m.Bce_hat*m.Bphis_inv); 
@@ -819,12 +825,12 @@ function m = De_matrices(ce,T,p,m)
     m.Phi_ce_bar = m.Ace_bar*m.Phi_ce; 
 end
 
-function m = Ds_matrices(stoich,T,p,m)
+function m = Ds_matrices(T,p,m)
     if p.set_simp(6)
-        p.Ds = [p.Ds_neg*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(stoich)]; 
+        p.Ds = [p.Ds_neg(T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(T)]; 
         m.Bcs_hat = [-diag(3*p.dt./p.Rs); diag(p.Rs./(5*p.Ds))]; 
     else
-        Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(stoich,T))'*kron(speye(p.np), ones(1,p.nrp))));
+        Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(T))'*kron(speye(p.np), ones(1,p.nrp))));
         Acs_hat_p = p.dt*Acs_p-speye(p.nrp*p.np);
         Acs_hat_inv_p = inv(Acs_hat_p); 
         m.Acs_hat_inv = blkdiag(m.Acs_hat_inv_n,Acs_hat_inv_p);  
@@ -905,7 +911,9 @@ p.dr_p=p.R_pos/(p.nrp-1);
 if not(p.thermal_dynamics)
     if not(isa(p.k0_neg,'function_handle')) p.k0_neg = @(T) p.k0_neg; end
     if not(isa(p.k0_pos,'function_handle')) p.k0_pos = @(T) p.k0_pos; end  
-    p.k0 = [p.k0_neg(p.T_amb)*ones(p.nn,1); p.k0_pos(p.T_amb)*ones(p.np,1)];
+    %p.k0 = [p.k0_neg(p.T_amb)*ones(p.nn,1); p.k0_pos(p.T_amb)*ones(p.np,1)];
+    p.k0 = @(T) [p.k0_neg(T)*ones(p.nn,1); p.k0_pos(T)*ones(p.np,1)];
+    p.k0f = p.k0;
 else
     if isa(p.k0_neg,'function_handle') || isa(p.k0_pos,'function_handle')
         if not(isa(p.k0_neg,'function_handle')) p.k0_neg = @(T) p.k0_neg; end
@@ -937,21 +945,20 @@ p.a_s_neg = 3*p.epss_neg/p.R_neg;                                              %
 p.a_s_pos = 3*p.epss_pos/p.R_pos;                                              %Specific interfacial surface area at the pos. electrode [1/m]
 p.a_s = [p.a_s_neg*ones(p.nn,1); p.a_s_pos*ones(p.np,1)];
 
-parnames = {'kappa' 'De' 'dlnfdce' 'Ds_pos'}; 
+parnames = {'kappa' 'dlnfdce' 'Ds_pos'}; 
+
 for i = 1:length(parnames)
     if not(isa(p.(parnames{i}),'function_handle')) || p.set_simp(i)==2
         if isa(p.(parnames{i}),'function_handle')
-            if i==4
-                p.(parnames{i})= p.(parnames{i})((p.s100_pos+p.s0_pos)/2,p.T_amb);
-            else
-                p.(parnames{i}) = p.(parnames{i})(p.ce0,p.T_amb); 
-            end
+
+                 p.(parnames{i}) = p.(parnames{i})(p.T_amb); 
+            
         end
         p.(parnames{i}) = @(c,T) p.(parnames{i}); 
         p.set_simp(i) = 2; 
     end
 end
-
+%if isa(p.De,'function_handle') p.De = @(T) p.De; end 
 if not(isa(p.i02,'function_handle')) p.i02 = @(T) p.i02; end 
 
 if not(isa(p.dU_dT_neg,'function_handle')) p.dU_dT_neg= @(stoich) p.dU_dT_neg*ones(p.nn,1); end
@@ -960,12 +967,13 @@ if not(isa(p.dU_dT_pos,'function_handle')) p.dU_dT_pos= @(stoich) p.dU_dT_pos*on
 
 p.kappa_eff = @(c,T) p.kappa(c,T).*p.eps_e.^p.brug;     %[S/m] 
 p.nu = @(c,T) 2*p.R*T*p.kappa_eff(c,T)*(p.t_plus-1)/p.F.*(1+p.dlnfdce(c,T)); 
-p.De_eff = @(c,T) p.De(c,T).*p.eps_e.^p.brug; 
+p.De_eff = @(T) p.De(T).*p.eps_e.^p.brug; 
+p.Ds_pos=@(T) p.Ds_pos(T);
 
 % p.elec_range specifies the range of the electrodes throughout the cell.
 p.elec_range = [linspace(1,p.nn,p.nn) linspace(p.nns+1,p.nx, p.np)];
 
-if nargin>2
+if nargin>3
     if isfield(auxpar,'cs_max_neg')
         p.cs_max_neg = auxpar.cs_max_neg;
     end
@@ -982,7 +990,7 @@ p.sd_pos = p.s0_pos_fresh-p.s100_pos_fresh;
 p.cs_max_neg = p.Cbat/(p.epss_neg*p.delta_neg*p.A_surf*p.F*p.sd_neg); 
 p.cs_max_pos = p.Cbat/(p.epss_pos*p.delta_pos*p.A_surf*p.F*p.sd_pos); 
 
-if nargin>2 && p.ageing==0
+if nargin>3 && p.ageing==0
     if isfield(auxpar,'cs_max_neg')
         p.cs_max_neg = auxpar.cs_max_neg;
     end
@@ -1155,14 +1163,14 @@ p.set_grid = [p.grid.nn p.grid.ns p.grid.np p.grid.nrn p.grid.nrp]; %compact spe
  
 p.tol = 1e-3; %Tolerance for convergence                                                                     
 p.iter_max = 1e2; %Maximum iterations for the Newton's algorithm for solving the algebraic equations
-p.Vmin = 2; p.Vmax = 5; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
+p.Vmin = 1; p.Vmax = 6; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
 p.verbose = 2; %verbosity of the toolbox. Allowable settings: 0. no verbosity, 1. only indicate starting and ending of simulation with computation time, 2. in addition to 1, also show current and voltage while simulating
 
-p.current_interp = 'linear'; %Interpolation method if input_current is given as an array. Choose any of the methods specified in the documenation of the MATLAB griddedInterpolant function
-p.current_extrap = 'linear'; %Extrapolation method if input_current is given as an array. Choose any of the methods specified in the documenation of the MATLAB griddedInterpolant function
+p.current_interp = 'linear'; %Interpolation method if input is given as an array. Choose any of the methods specified in the documenation of the MATLAB griddedInterpolant function
+p.current_extrap = 'linear'; %Extrapolation method if input is given as an array. Choose any of the methods specified in the documenation of the MATLAB griddedInterpolant function
 
 p.fvm_method = 1; %specifies how the face values of the FVM discretization are computed. Possible settings: 1: harmonic mean, 2: linear variation, 3:weighted mean.
-p.thermal_dynamics = 1; % toggles thermal dynamics. Choose 0 for no thermal dynamics.
+p.thermal_dynamics = 0; % toggles thermal dynamics. Choose 0 for no thermal dynamics.
 p.T_amb = 298.15; %ambient temperature
 p.Closs_init = 0; %initial condition for capacity loss due to side reactions
 p.ageing=0; %toggles ageing. Choose 0 for no ageing
@@ -1205,9 +1213,9 @@ p.p_neg = 4; %Bruggeman constant at the neg. electrode [-]
 p.p_pos = 4; %Bruggeman constant at the pos. electrode [-]
 p.p_sep = 4; %Bruggeman constant at the seperator [-]  
 
-p.Ds_neg = 3.9e-14;  %Solid-phase Li diffusion coefficient at the neg. electrode [m^2/s]
+p.Ds_neg = @(T) 1.0459e-14*exp(-5000/p.R*(1/T-1/T_amb));  %Solid-phase Li diffusion coefficient at the neg. electrode [m^2/s]
 %Ds_pos can be specified either as a scalar or an anonymous function with inputs concentration and temperature
-p.Ds_pos = @(stoich,T) 1315383.19875943*10.^(-20.26+534.9*(stoich-0.5).^8+2.263*(stoich-0.5).^2)*exp(-5000/p.R*(1/T-1/T_amb));   %Solid-phase Li diffusion coefficient at the pos. electrode [m^2/s] 
+p.Ds_pos = @(T) 4.6809e-12*exp(-5000/p.R*(1/T-1/T_amb));   %Solid-phase Li diffusion coefficient at the pos. electrode [m^2/s] 
 
 p.Rf_neg = 5.5e-3; %SEI film resistance in the negative electrode
 p.Rf_pos = 0; %SEI film resistance in the positive electrode
@@ -1246,7 +1254,7 @@ p.Cbat = -(p.s100_pos-p.s0_pos)*p.epss_pos*p.delta_pos*p.A_surf*p.F*cs_max_pos; 
 %scalar or an anonymous function with inputs concentration and temperature
 p.kappa = @(c,T)(1e-4*c.*((-10.5+0.668*1e-3*c+0.494*1e-6*c.^2) +(0.074  -1.78*1e-5*c -8.86*1e-10*c.^2).*T + (-6.96*1e-5+2.8*1e-8*c).*T.^2).^2); %Electrolyte ionic conductivity [S/m]
 p.dlnfdce = @(c,T) (0.601-0.24*(c/1000).^0.5+0.983.*(1-0.0052*(T-294))*(c/1000).^1.5)*(1-p.t_plus)^-1-1; 
-p.De = @(c,T) 1e-4*10.^((-4.43-54./(T-229-5e-3*c)-0.22e-3*c)); 
+p.De = @(T) 2.0524e-10*exp((5000/(8.3145))*((1/298)-(1/T))); 
 
 %Equilbrium potentials
 %Must be anonymous function with input the stoichiometry 
@@ -1436,7 +1444,7 @@ if sx(1)~=sY(1)
     end
 end
 
-if nargin>=4
+if nargin>=5
     method=methodflag;
 else
     method = 1;    % choose nearest-lower-neighbor, linear, etc.

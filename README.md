@@ -1,5 +1,5 @@
 # TOOFAB(ulous) (Toolbox for FAst Battery simulation)
-Version 1.5.2 (issued 21-10-2021)
+Version 1.5.3 (issued 09-04-2024)
 
 A fast implementation of the Doyle-Fuller-Newman (DFN) battery model usable for analysis and control. 
 
@@ -65,6 +65,8 @@ Zuan Khalik (https://www.tue.nl/en/research/researchers/zuan-khalik/)
 [1] Z. Khalik, M.C.F. Donkers, H.J. Bergveld, "Model Simplifications and Their Impact on Computational Complexity for an Electrochemistry-Based Battery Modeling Toolbox", in Journal of Power Sources, 2021
 
 [2] Z. Khalik, M.C.F. Donkers, H.J. Bergveld, "Parameter estimation of the Doyle–Fuller–Newman model for Lithium-ion batteries by parameter normalization, grouping, and sensitivity analysis", in Journal of Power Sources, 2021
+
+[3] F. le Roux, H.J. Bergveld, M.C.F. Donkers, "Improved Parameter Estimation of the Doyle-Fuller-Newman model by Incorporating Temperature Dependence", in IFAC-PapersOnline, 2023.
 
 ## License
 
