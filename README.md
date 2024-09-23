@@ -11,22 +11,21 @@ Parameter estimation of the DFN model from experimental current/voltage data inc
 - Accurate and computationally efficient simulation of the DFN model describing the internal electrochemical processes of a battery. 
 - Ability to easily use and change concentration-dependent parameters.
 - Ability to easily configure the toolbox for a desired trade-off between accuracy and computational efficiency through selection of model simplifications and adjusting the coarseness of the discretization grid. 
-- Option to use a battery ageing model describing the side reactions that lead to Li-ion loss due to the build-up SEI (solid-electrolyte interphase) layer.
+- Option to use a battery ageing model describing the side reactions that lead to Li-ion loss due to the a variety of agein phenomena. The user can find this in the Cycle_Ageing folder.
 - Option to use a lumped thermal model describing the thermal dynamics.  
 - Ability to efficiently use the model in a closed-loop setting. 
-- **NEW**: Estimate DFN model parameters based on experimental current/voltage data (functional, but still work in progress in terms of features and documentation)
+- Estimate DFN model parameters based on experimental current/voltage data.
 
 ### Coming features
-- Documentation for the parameter_determination function
-
-Any other desired features can still be requested. In that case, please contact the author (z.khalik@tue.nl).
+- Improved ageing modeling implementations
+- Parameter Estimation for ageing
 
 ## Getting Started
 These instructions will set you up to use TOOFAB.
 
 ### Prerequisites 
 This toolbox only requires a working version of MATLAB. 
-The toolbox has been tested with MATLAB R2020b, but should work with any MATLAB version equal to or newer than MATLAB R2016b. This compatibility requirement comes from the feature that allows local functions, added to MATLAB since version R2016b. A legacy version compatible with older MATLAB versions is planned to be added in the future, or upon request. 
+The toolbox has been tested with MATLAB R2023a, but should work with any MATLAB version equal to or newer than MATLAB R2016b. This compatibility requirement comes from the feature that allows local functions, added to MATLAB since version R2016b. A legacy version compatible with older MATLAB versions is planned to be added in the future, or upon request. 
 
 ### Using the toolbox
 **Simulation** of the DFN model using TOOFAB can be done with the DFN function defined as
