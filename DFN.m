@@ -35,7 +35,7 @@
 % This file is a part of the TOOlbox for FAst Battery simulation (TOOFAB)
 % Github: https://github.com/Zuan-Khalik/TOOFAB
 %
-% Author: Zuan Khalik (z.khalik@tue.nl)
+% Authors: Francis le Roux (f.a.l.le.roux@tue.nl), Zuan Khalik (z.khalik@tue.nl)
 %
 % TOOFAB is licensed under the BSD 3-Clause License
 %
@@ -84,7 +84,7 @@ par_or.EMF = p.EMF; par_or.U_pos = p.U_pos_out; par_or.U_neg = p.U_neg_out;
 par_or.dU_pos = p.dU_pos; par_or.dU_neg = p.dU_neg; 
 par_or.cs_max_neg = p.cs_max_neg; par_or.cs_max_pos = p.cs_max_pos; 
 m.dummy = 0; 
-m = fcn_system_matrices(p,m,p.T_amb);
+m = fcn_system_matrices(ones(p.nn,1),p,m,p.T_amb);
 
 [cs_prevt, ce_prevt, phis_prev,T_prevt,Cl_prevt,Rf] = init(p,m,init_cond);
 max_prealloc_size = 1e5;
@@ -183,7 +183,7 @@ while not(end_simulation)
         i_app(t+1) = F_current(t_vec(t+1));  
     end
     if(not(isequal(dt_prev,p.dt)))
-        m = fcn_system_matrices(p,m,T_prevt);
+        m = fcn_system_matrices(cs_prevt,p,m,T_prevt);
     end
     
     m = fcn_system_matrices2(p,m,cs_prevt,ce_prevt,T_prevt); 
@@ -427,13 +427,13 @@ ce_bar = m.Ace_bar*ce;
 cs_bar = m.Acs_bar*cs; 
 
 if p.set_simp(2)==0
-    m = De_matrices(T,p,m);
+    m = De_matrices(ce,T,p,m);
     m.Theta_ce = -m.Ace_hat_inv*ce_prevt; 
     m.Theta_ce_bar = m.Ace_bar*m.Theta_ce;
 end
 
 if p.set_simp(4)==0
-    m = Ds_matrices(T,p,m); 
+    m = Ds_matrices(cs_bar(1:p.nn)/p.cs_max_neg,cs_bar(p.nn+1:end)/p.cs_max_pos,T,p,m); 
     if p.set_simp(6)
         m.Theta_cs = -m.Acs_hat_inv*[cs_prevt(1:p.nnp);zeros(p.nnp,1)]; 
     else
@@ -716,7 +716,7 @@ end
 Closs = x_prev(5); 
 end
 
-function [ m ] = fcn_system_matrices( p,m,T )
+function [ m ] = fcn_system_matrices( stoichn,p,m,T )
 %-------------------------------------------------------------------------%
 %- This function defines the system matrices that do not change in the ---%
 %- Inner loop. The matrices that do change in the inner loop are placed --%
@@ -728,7 +728,11 @@ if p.set_simp(6)
 else
 Acs_jn = sparse(fcn_Acs_j(p.nrn));
 m.Acs_jp = sparse(fcn_Acs_j(p.nrp));
-Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+if nargin(p.Ds_neg)>1
+    Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(stoichn,p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+else
+    Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+end
 m.Acs_hat_n = p.dt*Acs_n-speye(p.nrn*p.nn);
 m.Acs_hat_inv_n = inv(m.Acs_hat_n); 
 
@@ -769,11 +773,11 @@ m.Aphie_bar = m.Ace_bar;
 m.Bphis_inv = inv(Bphis); 
 
 if p.set_simp(2)==2 || p.set_simp(2)==0
-    m = De_matrices(T,p,m); 
+    m = De_matrices(p.ce0,T,p,m); 
 end
 
 if p.set_simp(4)==2 || p.set_simp(4)== 0
-    m = Ds_matrices(T,p,m); 
+    m = Ds_matrices(ones(p.nn,1),ones(p.np,1),T,p,m); 
 end
 
 if p.set_simp(1)==2 || p.set_simp(1) == 0 
@@ -785,12 +789,12 @@ end
 function [ m ] = fcn_system_matrices2( p, m,cs_prevt, ce_prevt,T)
 %-------------------------------------------------------------------------%
 if p.set_simp(2)==1
-    m = De_matrices(T,p,m); 
+    m = De_matrices(ce_prevt,T,p,m); 
 end
 
 if p.set_simp(4)==1
     cs_bar = m.Acs_bar*cs_prevt; 
-    m = Ds_matrices(T,p,m); 
+    m = Ds_matrices(cs_bar(1:p.nn)/p.cs_max_neg,cs_bar(p.nn+1:end)/p.cs_max_pos,p.T_amb,p,m);
 end
 
 if p.set_simp(1)==1
@@ -814,8 +818,12 @@ if p.set_simp(2)==1 || p.set_simp(2)==2 || p.set_simp(2)==0
 end
 end 
 
-function m = De_matrices(T,p,m)
-    m.Ace = sparse(fcn_Aw(p.De_eff(T),p.eps_e.*p.dx,p.dx,p));
+function m = De_matrices(ce,T,p,m)
+    if nargin(p.De_eff)>1
+        m.Ace = sparse(fcn_Aw(p.De_eff(ce,T),p.eps_e.*p.dx,p.dx,p));
+    else
+        m.Ace = sparse(fcn_Aw(p.De_eff(T),p.eps_e.*p.dx,p.dx,p));
+    end
     m.Ace_hat = (p.dt*m.Ace-speye(p.nx)); 
     m.Ace_hat_inv = inv(m.Ace_hat);
     prem2 = m.Ace_hat_inv*(m.Bce_hat*m.Bphis_inv); 
@@ -825,9 +833,13 @@ function m = De_matrices(T,p,m)
     m.Phi_ce_bar = m.Ace_bar*m.Phi_ce; 
 end
 
-function m = Ds_matrices(T,p,m)
+function m = Ds_matrices(stoichn, stoichp,T,p,m)
     if p.set_simp(6)
-        p.Ds = [p.Ds_neg(T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(T)]; 
+        if nargin(p.Ds_neg)>1&&nargin(p.Ds_pos)>1
+            p.Ds = [p.Ds_neg(stoichn,T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(stoichp,T)]; 
+        else
+            p.Ds = [p.Ds_neg(T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(T)]; 
+        end
         m.Bcs_hat = [-diag(3*p.dt./p.Rs); diag(p.Rs./(5*p.Ds))]; 
     else
         Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(T))'*kron(speye(p.np), ones(1,p.nrp))));
@@ -967,7 +979,11 @@ if not(isa(p.dU_dT_pos,'function_handle')) p.dU_dT_pos= @(stoich) p.dU_dT_pos*on
 
 p.kappa_eff = @(c,T) p.kappa(c,T).*p.eps_e.^p.brug;     %[S/m] 
 p.nu = @(c,T) 2*p.R*T*p.kappa_eff(c,T)*(p.t_plus-1)/p.F.*(1+p.dlnfdce(c,T)); 
-p.De_eff = @(T) p.De(T).*p.eps_e.^p.brug; 
+if nargin(p.De)>1
+    p.De_eff = @(c,T) p.De(c,T).*p.eps_e.^p.brug; 
+else
+    p.De_eff = @(T) p.De(T).*p.eps_e.^p.brug; 
+end
 p.Ds_pos=@(T) p.Ds_pos(T);
 
 % p.elec_range specifies the range of the electrodes throughout the cell.
