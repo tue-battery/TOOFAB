@@ -6,6 +6,11 @@
 % subject to change. 
 % This file is a part of the TOOlbox for FAst Battery simulation (TOOFAB)
 % Github: https://github.com/tue-battery/TOOFAB
+
+% This example script allows the user to toggle between ageing phenomena presented in
+% F. le Roux, J. van Beers, H. J. Bergveld and T. Donkers,
+% "Analysis on the Distinguishability of Ageing Mechanisms within a Doyle- Fuller- Newman Framework,"
+% 2024 American Control Conference (ACC), Toronto, ON, Canada.
 %
 % Author: Francis le Roux (f.a.l.le.roux@tue.nl)
 %
