@@ -5,6 +5,8 @@ A fast implementation of the Doyle-Fuller-Newman (DFN) battery model usable for 
 
 Parameter estimation of the DFN model from experimental current/voltage data including a sensitivity analysis. 
 
+Physics-based ageing modeling
+
 ## Features
 
 ### Current features
@@ -51,21 +53,23 @@ where
 - results: contains additional information on the estimation results.
 - equil_data is a struct that contains the information on the equilbrium potential of the cell (or the EMF). When the EMF is used, there should be 2 fields in equil: EMF and Cbat. EMF should be function of SOC and Cbat should be given in C. 
 Several example files are included that show how to use the toolbox. 
-- est_data is a cell that can contain multiple structs that in itself contain the measurement data. In each of the structs, there should be at least 3 fields: t, I, V. t is the time vector, I contains the applied current measurements and V the terminal voltage measurements. For simplicity, make sure that you interpolate the data such that the sample time is 1 s (see the example data). 
+- est_data is a cell that can contain multiple structs that in itself contain the measurement data. In each of the structs, there should be at least 3 fields: t, I, V. t is the time vector, I contains the applied current measurements, V the terminal voltage measurements and T the measured cell temperature. For simplicity, make sure that you interpolate the data such that the sample time is 1 s (see the example data). 
 - options: specify additional options for the parameter estimation routine. 
 
 ## Issues
-It could happen that you encounter errors or unexpected behavior under certain circumstances. If you find any problems with the toolbox, please contact me (z.khalik@tue.nl). I am open to assist you with the use of the toolbox for your usecase. 
+It could happen that you encounter errors or unexpected behavior under certain circumstances. If you find any problems with the toolbox, please contact me (f.a.l.le.roux@tue.nl). I am open to assist you with the use of the toolbox for your usecase. 
 
 ## Authors
 Zuan Khalik (https://www.tue.nl/en/research/researchers/zuan-khalik/)
-
+Francis le Roux (https://www.tue.nl/en/research/researchers/francis-le-roux)
 ## References
 [1] Z. Khalik, M.C.F. Donkers, H.J. Bergveld, "Model Simplifications and Their Impact on Computational Complexity for an Electrochemistry-Based Battery Modeling Toolbox", in Journal of Power Sources, 2021
 
 [2] Z. Khalik, M.C.F. Donkers, H.J. Bergveld, "Parameter estimation of the Doyle–Fuller–Newman model for Lithium-ion batteries by parameter normalization, grouping, and sensitivity analysis", in Journal of Power Sources, 2021
 
 [3] F. le Roux, H.J. Bergveld, M.C.F. Donkers, "Improved Parameter Estimation of the Doyle-Fuller-Newman model by Incorporating Temperature Dependence", in IFAC-PapersOnline, 2023.
+
+[4] F. le Roux, T. Donkers, H.J. Bergveld, "Lithium-ion battery ageing modeling: Towards physically consistent implementations of SEI growth, Lithium plating, and Cathode oxidation", in Journal of Power Sources, 2026
 
 ## License
 
