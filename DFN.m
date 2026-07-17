@@ -1,23 +1,24 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
-% V1.1.3
+% V1.5.4
 %
 % Simulation of the DFN model
 % 
 % Inputs: 
-%    - input: Contains information about the current profile. This 
+%    - input_current: Contains information about the current profile. This 
 %      field can be provided either as a scalar representing the desired 
 %      applied current from time 0 to tf, an array which 
-%      contains the current levels at each specified sample time, or as a
+%      contains the current levels at each specified sample time (this array can 
+%      also include an associated temperature profile as a third column), or as a
 %      function which takes the output voltage, current, concentration and 
 %      potentials, and the parameters as input and mainly provides the 
 %      current as output. The latter form is especially useful when the
 %      battery is desired to be controlled in closed-loop. Example 
-%      functions for input are provided with the toolbox. The temperature profile can also be added
-%      here, as a third column, if input current is not specified as a function. 
+%      functions for input_current are provided with the toolbox.
 %    - final_time specifies the simulation time in seconds
 %    - init_cond: Specifies the initial condition, which can be either an 
-%      initial state-of-charge, as a value between 0 and 1, an initial 
+%      initial state-of-charge, as a value between 0 and 1, an initial
+%      out.e
 %      voltage, or a MATLAB struct where the initial condition for 
 %      a non-steady-state c_s, c_e, and T can be specified. Further 
 %      details on how init_cond can be specified can be found in 
@@ -33,7 +34,7 @@
 %      concentrations and the potentials.
 %
 % This file is a part of the TOOlbox for FAst Battery simulation (TOOFAB)
-% Github: https://github.com/Zuan-Khalik/TOOFAB
+% Github: https://github.com/tue-battery/TOOFAB
 %
 % Authors: Francis le Roux (f.a.l.le.roux@tue.nl), Zuan Khalik (z.khalik@tue.nl)
 %
@@ -43,9 +44,11 @@
 
 function out = DFN(input,final_time,init_cond,varargin)
 p = default_parameters();
+
 if nargin>3
     p = process_param(p,varargin{1}); 
 end
+
 if length(init_cond)>1
     p.ageing = 1;
 end
@@ -87,7 +90,7 @@ m.dummy = 0;
 m = fcn_system_matrices(ones(p.nn,1),p,m,p.T_amb);
 
 [cs_prevt, ce_prevt, phis_prev,T_prevt,Cl_prevt,Rf] = init(p,m,init_cond);
-max_prealloc_size = 1e5;
+max_prealloc_size = 2e8;
 phis = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 phie = zeros(p.nx,min(max_prealloc_size,round(time_max/p.dt)));
 if p.set_simp(6)
@@ -103,7 +106,20 @@ U = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 V = zeros(1,min(max_prealloc_size,round(time_max/p.dt)));
 T = zeros(1,min(max_prealloc_size,round(time_max/p.dt)));
 eta2 = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+eta_ox = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 j2 = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+jlpl = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+Fac = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+CeRat=zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+FacT = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+j1 = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+j_ox = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+epse_neg_temp = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+epse_neg_temp(:,1) = p.epse_neg;
+epss_pos_temp = zeros(p.nn,min(max_prealloc_size,round(time_max/p.dt))); % zeros(1,round(time_max/p.dt));  %
+epss_pos_temp(:,1) = p.epss_pos;
+
+scount=1;
 if p.ageing
     se_init = [p.s100_neg; p.s100_pos; p.s0_neg; p.s0_pos]; 
     p.i02 = p.i02f(T_prevt); 
@@ -125,17 +141,31 @@ ce(:,1) = ce_prevt;
 phis(:,1) = phis_prev;
 Cl(1) = Cl_prevt; 
 Rf_prevt = Rf; 
+Closs_ox(1) = 0;
+Closs_SEI(1) = 0;
+Closs_LPL(1) = 0;
+
 %Measure simulation time for benchmark purposes
 if p.verbose>0
     dispstat('Starting simulation...','keepthis','timestamp')
 end
 
 mem.dummy = 0;
+
+% ~~~~~~~~~~~ Memory Variables ~~~~~~~~~~~ %
+mem.CycleNo = 1; % Initialize The Cycle NUmber for CC-CV Charging NOTE: <-- This is for Multi Cycle Discharging
+mem.TotCycle = p.TotCycle; % Set the total number of cycles for CC-CV Charging
+mem.Closs(1) = 0;
+mem.Cbat_aged(1) = 0;
+mem.CycleTimeStamp(1) = 0;
+mem.Cbat_aged_current = p.Cbat;
+
 warning_set = 0;
 t_vec = 0; 
 end_simulation = 0; 
 solution_time = 0;
 num_iter = 0; 
+early_term_PE = 0;
 max_iterations = 0;
 dt_or = p.dt; 
 %% Simulation
@@ -154,10 +184,16 @@ while not(end_simulation)
                 dt_or = dt_user;
                 p.dt = dt_or;
             end
+            if dt_user<dt_or
+                dt_or = dt_user;
+                p.dt = dt_or;
+               
+           
+            end
         elseif nargout(input)==3
             [i_app(t+1),mem,end_simulation] = input(t,t_vec(t),i_app,V,soc,cs,ce,phis,phie,mem,p);
         else
-            error('input detected as a function handle, but does not have the required inputs and outputs defined.')
+            error('input_current detected as a function handle, but does not have the required inputs and outputs defined.')
         end
     end
     
@@ -188,13 +224,10 @@ while not(end_simulation)
     
     m = fcn_system_matrices2(p,m,cs_prevt,ce_prevt,T_prevt); 
     
-    if t_vec(t)==1823
-        temp = 1;
-    end
     % Solve set of AEs using Newton's method at time t
     for k=1:p.iter_max
         % Obtain function matrix and Jacobian       
-        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),j2(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),U(:,t+1),p,m] = fcn_F(phis_prev,ce_prevt,cs_prevt,T_prevt,i_app(t+1),p,m);
+        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),j2(:,t+1),jlpl(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),j_ox(:,t+1),U(:,t+1),p,m,Fac(:,t+1),CeRat(:,t+1)] = fcn_F(phis_prev,ce_prevt,cs_prevt,FacT(:,t),T_prevt,i_app(t+1),p,m);
         conv_check = norm(F_phis,2); 
         num_iter = num_iter+1; 
        % If algorithm doesn't converge, then display a warning
@@ -215,7 +248,7 @@ while not(end_simulation)
             kl = 1;
             break
         end
-        [J_phis,p] = fcn_J(cs(:,t+1),ce(:,t+1),jn(:,t+1),jn(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),T_prevt,p,m); 
+        [J_phis,p] = fcn_J(cs(:,t+1),ce(:,t+1),FacT(:,t),CeRat(:,t),jn(:,t+1),jn(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),T_prevt,p,m); 
         
         if t==1
             phis_prev = real(phis_prev-(J_phis\F_phis)); 
@@ -231,24 +264,53 @@ while not(end_simulation)
         +(p.R_cc/p.A_surf)*i_app(t+1);
     if mod(t,100)==0
         if p.verbose ==2
-            print_loop(t_vec(end),time_max,i_app(t+1),V(t+1),k,solution_time)
+            print_loop(t_vec(end),time_max,i_app(t+1),V(t+1),k,solution_time, mem)
         end
     end
-
+    
     if p.ageing   
-        Clterm = p.F*p.dt*p.dx_n*p.A_surf*sum(abs(j2(1:p.nn,t+1).*p.a_s_neg)); 
-        Cl(t+1) = Cl_prevt+Clterm;
-        Rf(:,t+1) = Rf_prevt-p.dt*(p.V_SEI./(p.sigma_SEI).*j2(:,t+1)); 
+        %SEI Formation
+ 
+        Closs_SEI(t+1) = Closs_SEI(t) + p.F*p.dt*p.dx_n*p.A_surf*(sum(abs(j2(1:p.nn,t+1).*p.a_s(1:p.nn))));
+        Closs_LPL(t+1) = Closs_LPL(t) - p.F*p.dt*p.dx_n*p.A_surf*(sum(jlpl(1:p.nn,t+1).*abs(p.a_s(1:p.nn))));
+        FacT(1:p.nn,t+1)=FacT(1:p.nn,t)-(jlpl(1,t+1));
+        Rf(:,t+1) = Rf_prevt-p.dt*(p.B1_s).*j2(:,t+1)-p.dt*(p.B1_l).*jlpl(:,t+1); 
+
+        if epse_neg_temp(:,t)>0
+            epse_neg_temp(:,t+1) = epse_neg_temp(:,t) + p.dt*p.B2_s.*j2(:,t+1)+ p.dt*p.B2_l.*jlpl(:,t+1); 
+        else
+            epse_neg_temp(:,t+1)=epse_neg_temp(:,t);
+        end
+        
+        %Cathode Oxidation
+        % BO = -0.001;
+        epss_pos_temp(:,t+1) = epss_pos_temp(:,t) + p.dt*p.BO*j_ox(p.nn+1:end,t+1);
+        Closs_ox(t+1) = Closs_ox(t) + p.F*p.dt*p.dx_p*p.A_surf*(sum(abs(j_ox(1+p.nn:end,t+1).*p.a_s(1+p.nn:end))));
+        Cl(t+1) = Closs_SEI(t+1)+ Closs_LPL(t+1) +Closs_ox(t+1);   
     end
     
-    if mod(t,1000)==0 && p.ageing==1
+    if mod(t,500)==0 && p.ageing==1
         [Cbat_new,sbat] = fcn_Q(Cl(t+1),se_init,1,p); 
         p.s0_neg = sbat(3); p.s100_neg = sbat(1);
         p.s0_pos = sbat(4); p.s100_pos = sbat(2);
+        stoichs{scount}.s0_neg= p.s0_neg;
+        stoichs{scount}.s0_pos= p.s0_pos;
+        stoichs{scount}.s100_neg= p.s100_neg;
+        stoichs{scount}.s100_pos= p.s100_pos;
+        scount=scount+1;
         se_init = sbat;
-        Qs = soc_prevt*p.Cbat-(Cl(t+1)-Cl(t+1-1000));
+        Qs = soc_prevt*p.Cbat-(Cl(t+1)-Cl(t+1-500));
         p.Cbat = Cbat_new;
         soc_prevt = Qs/p.Cbat; 
+        p.eps_e(1:p.nn) = epse_neg_temp(1:p.nn,t);
+        mem.Cbat_aged_current = Cbat_new;
+        
+        p.epss_pos = epss_pos_temp(:,t);
+        p.sigma_eff_pos = p.sigma_pos.*p.epss_pos;
+        p.sigma_eff(p.nn+1:end) = p.sigma_eff_pos;
+        p.a_s_pos = 3*p.epss_pos/p.R_pos; 
+        p.a_s(p.nn+1:end) = p.a_s_pos;
+        p.eps_s(p.nn+1:end) = p.epss_pos;
     end
     soc(t+1) = compute_soc(cs(:,t+1),p); 
     if p.set_simp(6)
@@ -262,7 +324,11 @@ while not(end_simulation)
     elseif exist('input_temperature','var')==1
         T(t+1) = input_temperature(t); 
     else
-        T(t+1) = p.T_amb; 
+        if input_mode==2 && isfield(mem,'T_amb') 
+            T(t+1)=mem.T_amb;
+        else
+            T(t+1) = p.T_amb; 
+        end
     end
     solution_time = solution_time+toc();
     if (any(stoich>=1-1e-6) || any(stoich<=1e-6)) && not(max_iterations)
@@ -276,7 +342,7 @@ while not(end_simulation)
         warning('ce is lower than 0. Stopping the simulation.')
     end
     if (V(t+1) <p.Vmin || V(t+1) >p.Vmax) && not(max_iterations)
-        warning('Voltage exceeded specified bounds. Stopping the simulation.')
+%         warning('Voltage exceeded specified bounds. Stopping the simulation.')
         end_simulation=1;
     end
     if kl>4 
@@ -284,6 +350,7 @@ while not(end_simulation)
     end
     if t>5 &&(t_vec(t)-t_vec(t-5))<1e-4
         end_simulation = 1;
+        early_term_PE = 1;
         warning('Simulation is not progressing. Stopping the simulation. Most likely causes are: too high applied current, ce close 0, cs close to cs_max or close to 0')
     end
     if end_simulation==1
@@ -332,10 +399,27 @@ else
 end
 p.L = p.delta_neg+p.delta_sep+p.delta_pos; 
 % Store states
-out.x = [p.dx_n/2*(1:2:(p.nn*2-1)) p.delta_neg+[p.dx_s/2*(1:2:(p.ns*2-1))]...
-        p.delta_neg+p.delta_sep+p.dx_p/2*(1:2:(p.np*2-1))]'/p.L; 
+% out.x = [p.dx_n/2*(1:2:(p.nn*2-1)) p.delta_neg+[p.dx_s/2*(1:2:(p.ns*2-1))]...
+%         p.delta_neg+p.delta_sep+p.dx_p/2*(1:2:(p.np*2-1))]'/p.L; 
+if early_term_PE
+    for i = 1:5
+        t_vec(n_t-i) = [];
+        cs(:,n_t-i) = [];
+        ce(:,n_t-i) = [];
+        phis(:,n_t-i) = [];
+        phie(:,n_t-i) = [];
+        jn(:,n_t-i) = [];
+        U(:,n_t-i) = [];
+        eta(:,n_t-i) = [];
+        V(:,n_t-i) = [];
+        i_app(:,n_t-i) = [];
+        T(:,n_t-i) = [];
+        soc(:,n_t-i) = [];
+    end
+    n_t = t_vec(end)+1;
+end
 out.t = t_vec(2:n_t); 
-out.cs = cs(:,2:n_t);
+% out.cs = cs(:,2:n_t);
 out.ce = ce(:,2:n_t); 
 out.phis = [phis(1:p.nn,2:n_t); NaN(p.ns,n_t-1); phis(p.nn+1:end,2:n_t)]; 
 out.phie = phie(:,2:n_t); 
@@ -344,8 +428,9 @@ if p.set_simp(6)
 else
     out.cs_bar = [cs(p.nrn:p.nrn:p.nrn*p.nn,2:n_t); NaN(p.ns,n_t-1); cs(p.nrn*p.nn+p.nrp:p.nrp:end,2:n_t)];
 end
-out.stoich = [out.cs_bar(1:p.nn,:)/p.cs_max_neg; NaN(p.ns,n_t-1); out.cs_bar(p.nns+1:end,:)/p.cs_max_pos]; 
-out.jn = [jn(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jn(p.nn+1:end,2:n_t)];  
+% out.stoich = [out.cs_bar(1:p.nn,:)/p.cs_max_neg; NaN(p.ns,n_t-1); out.cs_bar(p.nns+1:end,:)/p.cs_max_pos]; 
+% out.jn = [jn(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jn(p.nn+1:end,2:n_t)];  
+out.j_ox=j_ox;
 out.U = [U(1:p.nn,2:n_t); NaN(p.ns,n_t-1); U(p.nn+1:end,2:n_t)];  
 out.eta = [eta(1:p.nn,2:n_t); NaN(p.ns,n_t-1); eta(p.nn+1:end,2:n_t)]; 
 out.V = V(2:n_t); 
@@ -355,18 +440,30 @@ out.soc = soc(2:n_t);
 out.param = par_or; 
 out.mem = mem;
 
+
 if p.ageing
-    [out.ageing.Cbat_aged,sbat] = fcn_Q(Cl(n_t),se_init,1,p); 
+    % [out.ageing.Cbat_aged,sbat] = fcn_Q(Cl(n_t),se_init,1,p); 
+    out.Cl_ox=Closs_ox(2:n_t);
+    out.Closs_SEI=Closs_SEI(2:n_t);
+    out.Closs_LPL=Closs_LPL(2:n_t);
+    out.Cl=Cl(2:n_t);
     out.ageing.s0_neg_aged = sbat(3); 
     out.ageing.s100_neg_aged = sbat(1);
     out.ageing.s0_pos_aged = sbat(4);
     out.ageing.s100_pos_aged = sbat(2);
     out.ageing.Closs = Cl(2:n_t); 
-    out.ageing.Rf = [Rf(1:p.nn,end); NaN(p.ns,1); Rf(p.nn+1:end,end)];
+    out.ageing.Rf = [Rf(1:p.nn,2:n_t); NaN(p.ns,n_t-1); Rf(p.nn+1:end,2:n_t)];
     out.ageing.j2 = [j2(1:p.nn,2:n_t); NaN(p.ns,n_t-1); j2(p.nn+1:end,2:n_t)]; 
+    out.ageing.jlpl = [jlpl(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jlpl(p.nn+1:end,2:n_t)]; 
+    out.ageing.Fac= [Fac(1:p.nn,2:n_t); NaN(p.ns,n_t-1); Fac(p.nn+1:end,2:n_t)]; 
     out.ageing.eta2 = [eta2(1:p.nn,2:n_t); NaN(p.ns,n_t-1); eta2(p.nn+1:end,2:n_t)]; 
-    out.states_end.Closs = Cl(n_t); 
-    out.states_end.Rf = out.ageing.Rf; 
+    out.ageing.eta_ox=eta_ox;
+    % out.states_end.Closs = Cl(n_t); 
+    % out.states_end.Rf = out.ageing.Rf; 
+    out.ageing.epse_neg = [epse_neg_temp(1:p.nn,2:n_t); NaN(p.ns,n_t-1); epse_neg_temp(p.nn+1:end,2:n_t)];
+    out.ageing.epss_pos = epss_pos_temp(:,2:n_t);
+    out.ageing.LPLConc= FacT;
+    out.stoichs=stoichs;
 end
 
 out.states_end.phis = phis(:,n_t);
@@ -401,7 +498,7 @@ cs_avg = sum(3/p.R_neg^3*(fx_kp1+fx_k)/2*dr_n);
 soc = (cs_avg/p.cs_max_neg-p.s0_neg)/(p.s100_neg-p.s0_neg); 
 end
 
-function [ F_phis,cs,ce,phie,jn,j2,i0,eta,eta2,U,p,m] = fcn_F(phis,ce_prevt,cs_prevt,T,i_app,p,m)
+function [ F_phis,cs,ce,phie,jn,j2,jlpl,i0,eta,eta2,eta_ox,j_ox,U,p,m,Fac,CeRat] = fcn_F(phis,ce_prevt,cs_prevt,FacLPL,T,i_app,p,m)
 %-------------------------------------------------------------------------%
 %- Compute F_phis and J_phis ---------------------------------------------%
 %-------------------------------------------------------------------------% 
@@ -409,15 +506,62 @@ jn = -m.Bphis_inv*(m.Aphis*phis+m.Cphis*i_app);
 ce =  m.Gamma_ce*i_app+m.Phi_ce*phis+m.Theta_ce; 
 phie = m.Gamma_phie*i_app+m.Phi_phie*phis+m.Pi_phie*log(ce); 
 phie_bar = m.Aphie_bar*phie; 
+
 if p.ageing
-    eta2 = phis-phie_bar-p.U2-p.Rf.*p.F.*jn;
-    j2 = -(p.i02/p.F).*exp(-2*p.alpha_c2*p.F/(p.R*T)*eta2);
+    %The definition of your eta2 implementation depends on where you assume
+    %ageing takes place. Our assumption is based on the outcomes of [le
+    %Roux et. al. JPS 2026]
+    % eta2 = phis-phie_bar-p.Rf.*p.F.*jn;
+    eta2 = phis-phie_bar;
+    if p.ageingMech.SEI && p.LimitedSEI
+        Fac=exp(-p.Rf*(p.lamda_sei));
+        j2 = Fac.*(p.i02/p.F).*(-(exp(-p.alpha_c2*p.F/(p.R*T)*eta2)));
+    elseif p.ageingMech.SEI && ~p.LimitedSEI
+        Fac=zeros(p.np+p.nn,1);
+        j2 = (p.i02/p.F).*(-(exp(-p.alpha_c2*p.F/(p.R*T)*eta2)));
+    else 
+        j2 = zeros(p.nn+p.np,1); 
+        Fac=zeros(p.nn+p.np,1);
+       
+    end
+    if p.ageingMech.LPL
+
+            if ~(exist('jlpl',"var"))
+                jlpl=zeros(20,1);
+            end
+
+            CeRat=[ce_prevt(1:10);ce_prevt(21:30)];
+            jlpl = (p.i0lpl/p.F).*(((FacLPL/1000).*exp(p.alphaa_lpl*p.F/(p.R*T)*eta2))-((CeRat/1000).*exp(-p.alphac_lpl*p.F/(p.R*T).*eta2)));
+           
+            jlpl(p.nn+1:end) = zeros(p.np,1); 
+        
+    else
+        jlpl = zeros(p.nn+p.np,1); 
+        CeRat=zeros(p.nn+p.np,1);
+    end
+    if p.ageingMech.Oxidation
+        eta_ox = phis-phie_bar;
+        j_ox = (p.i0C/p.F).*exp(p.alpha_a2*p.F/(p.R*T)*eta_ox);
+    else 
+        j_ox = zeros(p.nn+p.np,1);
+        eta_ox = zeros(p.nn+p.np,1);
+    end
     j2(p.nn+1:end) = zeros(p.np,1); 
+   
+    Fac(p.nn+1:end)=zeros(p.np,1);
+   
+    j_ox(1:p.nn,:) = zeros(p.nn,1);
+    eta_ox(1:p.nn,:) = zeros(p.nn,1); 
 else
     j2 = zeros(p.nn+p.np,1); 
+    jlpl = zeros(p.nn+p.np,1); 
+    Fac=zeros(p.nn+p.np,1);
     eta2 = zeros(p.nn+p.np,1);
+    j_ox = zeros(p.nn+p.np,1);
+    eta_ox = zeros(p.nn+p.np,1);
+    CeRat=zeros(p.nn+p.np,1);
 end
-j1 = jn-j2; 
+j1 = jn-j2-jlpl-j_ox; 
 if p.set_simp(6)==1
     cs = -m.Acs_hat_inv*(m.Bcs_hat*j1+[cs_prevt(1:p.nnp);zeros(p.nnp,1)]); 
 else
@@ -482,7 +626,7 @@ end
 
 end
 
-function [J_phis,p] = fcn_J(cs,ce,jn,j1,i0,eta,eta2,T,p,m)
+function [J_phis,p] = fcn_J(cs,ce,FacLPL,CeRat,jn,j1,i0,eta,eta2,eta_ox,T,p,m)
 %-------------------------------------------------------------------------%
 %- Compute F_phis and J_phis ---------------------------------------------%
 %-------------------------------------------------------------------------% 
@@ -501,12 +645,40 @@ djndphis = -m.Bphis_inv*m.Aphis;
 dphiedphis = m.Phi_phie_bar+m.Pi_phie_bar*diag(1./ce)*m.Phi_ce;  
 
 if p.ageing
-    deta2dphis = eye(p.nnp)-dphiedphis-diag(p.F*p.Rf)*djndphis;
-    dj2dphis = diag(p.i02*2*p.alpha_c2/(p.R*T)*exp(-2*p.alpha_c2*p.F/(p.R*T)*eta2))*deta2dphis; 
+    %The definition of your eta2 implementation depends on where you assume
+    %ageing takes place. Our assumption is based on the outcomes of [le
+    %Roux et. al. JPS 2026]
+    % deta2dphis = eye(p.nnp)-dphiedphis-diag(p.F*p.Rf)*djndphis;
+    deta2dphis = eye(p.nnp)-dphiedphis;
+    % SEI Formation
+    
+    if p.LimitedSEI
+        dj2dphis = diag(exp(-p.Rf.*p.lamda_sei).*p.i02).*(p.alpha_c2/(p.R*T).*(exp(-p.alpha_c2*p.F/(p.R*T)*eta2)))*deta2dphis; 
+    else 
+        dj2dphis = diag(p.i02*(p.alpha_c2/(p.R*T)*(exp(-p.alpha_c2*p.F/(p.R*T)*eta2))))*deta2dphis; 
+    end
     dj2dphis(p.nn+1:end,:) = zeros(p.np,p.nnp); 
-    dj1dphis = djndphis-dj2dphis; 
+    
+    % Lithium Plating
+    lpl_exp1 = exp(p.alphaa_lpl*p.F*eta/(p.R*T)); 
+    lpl_exp2 = exp(-p.alphac_lpl*p.F*eta/(p.R*T)); 
+    dexp1dphislpl = diag((FacLPL/1000)*p.i0lpl*p.alphaa_lpl/(p.R*T).*lpl_exp1)*deta2dphis; 
+    dexp2dphislpl = -diag((CeRat/1000)*p.i0lpl*p.alphac_lpl/(p.R*T).*lpl_exp2)*deta2dphis; 
+    djlpldphis = dexp1dphislpl-dexp2dphislpl; 
+
+    djlpldphis(p.nn+1:end,:) = zeros(p.np,p.nnp); 
+
+    %Cathode Oxidation
+    deta_oxdphis = eye(p.nnp)-dphiedphis;
+    dj_oxdphis = diag(p.i0C*p.alpha_a2/(p.R*T)*exp(p.alpha_a2*p.F/(p.R*T)*eta_ox))*deta_oxdphis;
+   
+    dj_oxdphis(1:p.nn,:) = zeros(p.nn,p.nnp);
+    
+    %Total ageing effect
+    dj1dphis = djndphis-dj2dphis-djlpldphis-dj_oxdphis;
 else
     dj1dphis = djndphis; 
+    
 end
 
 if p.ageing
@@ -625,7 +797,7 @@ else
         se_init = [p.s100_neg; p.s100_pos; p.s0_neg; p.s0_pos]; 
         Closs = fcn_Q_inv(init_cond(2),se_init,0,p);
         j2_avg_tot = Closs/(p.F*p.dt*p.dx_n*p.A_surf*p.a_s_neg*p.nn); 
-        Rf = p.Rf+(p.dt*p.V_SEI./p.sigma_SEI.*j2_avg_tot)*[ones(p.nn,1); zeros(p.np,1)]; 
+        Rf = p.Rf+(p.dt*p.B1.*j2_avg_tot)*[ones(p.nn,1); zeros(p.np,1)]; 
     else
         Closs = p.Closs_init;
         Rf = p.Rf; 
@@ -716,7 +888,7 @@ end
 Closs = x_prev(5); 
 end
 
-function [ m ] = fcn_system_matrices( stoichn,p,m,T )
+function [ m ] = fcn_system_matrices(stoichn, p,m,T )
 %-------------------------------------------------------------------------%
 %- This function defines the system matrices that do not change in the ---%
 %- Inner loop. The matrices that do change in the inner loop are placed --%
@@ -728,10 +900,16 @@ if p.set_simp(6)
 else
 Acs_jn = sparse(fcn_Acs_j(p.nrn));
 m.Acs_jp = sparse(fcn_Acs_j(p.nrp));
-if nargin(p.Ds_neg)>1
-    Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(stoichn,p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
-else
-    Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+if isa(p.Ds_neg,'function_handle') 
+
+    if nargin(p.Ds_neg)>1
+        Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(stoichn,p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+    else
+        Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+    end
+
+else 
+    Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
 end
 m.Acs_hat_n = p.dt*Acs_n-speye(p.nrn*p.nn);
 m.Acs_hat_inv_n = inv(m.Acs_hat_n); 
@@ -797,6 +975,7 @@ if p.set_simp(4)==1
     m = Ds_matrices(cs_bar(1:p.nn)/p.cs_max_neg,cs_bar(p.nn+1:end)/p.cs_max_pos,p.T_amb,p,m);
 end
 
+
 if p.set_simp(1)==1
     m = kappa_matrices(ce_prevt,T,p,m); 
     m = nu_matrices(ce_prevt,T,p,m); 
@@ -833,7 +1012,7 @@ function m = De_matrices(ce,T,p,m)
     m.Phi_ce_bar = m.Ace_bar*m.Phi_ce; 
 end
 
-function m = Ds_matrices(stoichn, stoichp,T,p,m)
+function m = Ds_matrices(stoichn,stoichp,T,p,m)
     if p.set_simp(6)
         if nargin(p.Ds_neg)>1&&nargin(p.Ds_pos)>1
             p.Ds = [p.Ds_neg(stoichn,T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(stoichp,T)]; 
@@ -842,7 +1021,11 @@ function m = Ds_matrices(stoichn, stoichp,T,p,m)
         end
         m.Bcs_hat = [-diag(3*p.dt./p.Rs); diag(p.Rs./(5*p.Ds))]; 
     else
-        Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(T))'*kron(speye(p.np), ones(1,p.nrp))));
+        if nargin(p.Ds_pos)>1
+            Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(stoichp,T))'*kron(speye(p.np), ones(1,p.nrp))));
+        else
+            Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(T))'*kron(speye(p.np), ones(1,p.nrp))));
+        end
         Acs_hat_p = p.dt*Acs_p-speye(p.nrp*p.np);
         Acs_hat_inv_p = inv(Acs_hat_p); 
         m.Acs_hat_inv = blkdiag(m.Acs_hat_inv_n,Acs_hat_inv_p);  
@@ -962,16 +1145,22 @@ parnames = {'kappa' 'dlnfdce' 'Ds_pos'};
 for i = 1:length(parnames)
     if not(isa(p.(parnames{i}),'function_handle')) || p.set_simp(i)==2
         if isa(p.(parnames{i}),'function_handle')
-
+            if nargin(p.(parnames{i}))>1
+                 p.(parnames{i}) = p.(parnames{i})(p.ce0,p.T_amb); 
+            else
+                   
                  p.(parnames{i}) = p.(parnames{i})(p.T_amb); 
             
+            end
         end
         p.(parnames{i}) = @(c,T) p.(parnames{i}); 
         p.set_simp(i) = 2; 
+        
     end
 end
-%if isa(p.De,'function_handle') p.De = @(T) p.De; end 
+if not(isa(p.De,'function_handle')) p.De = @(T) p.De; end 
 if not(isa(p.i02,'function_handle')) p.i02 = @(T) p.i02; end 
+if not(isa(p.Ds_neg,'function_handle')) p.Ds_neg = @(T) p.Ds_neg; end 
 
 if not(isa(p.dU_dT_neg,'function_handle')) p.dU_dT_neg= @(stoich) p.dU_dT_neg*ones(p.nn,1); end
 if not(isa(p.dU_dT_pos,'function_handle')) p.dU_dT_pos= @(stoich) p.dU_dT_pos*ones(p.np,1); end
@@ -984,7 +1173,7 @@ if nargin(p.De)>1
 else
     p.De_eff = @(T) p.De(T).*p.eps_e.^p.brug; 
 end
-p.Ds_pos=@(T) p.Ds_pos(T);
+%p.Ds_pos=@(T) p.Ds_pos(T);
 
 % p.elec_range specifies the range of the electrodes throughout the cell.
 p.elec_range = [linspace(1,p.nn,p.nn) linspace(p.nns+1,p.nx, p.np)];
@@ -1179,7 +1368,7 @@ p.set_grid = [p.grid.nn p.grid.ns p.grid.np p.grid.nrn p.grid.nrp]; %compact spe
  
 p.tol = 1e-3; %Tolerance for convergence                                                                     
 p.iter_max = 1e2; %Maximum iterations for the Newton's algorithm for solving the algebraic equations
-p.Vmin = 1; p.Vmax = 6; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
+p.Vmin = 2.5; p.Vmax = 6; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
 p.verbose = 2; %verbosity of the toolbox. Allowable settings: 0. no verbosity, 1. only indicate starting and ending of simulation with computation time, 2. in addition to 1, also show current and voltage while simulating
 
 p.current_interp = 'linear'; %Interpolation method if input is given as an array. Choose any of the methods specified in the documenation of the MATLAB griddedInterpolant function
@@ -1190,7 +1379,10 @@ p.thermal_dynamics = 0; % toggles thermal dynamics. Choose 0 for no thermal dyna
 p.T_amb = 298.15; %ambient temperature
 p.Closs_init = 0; %initial condition for capacity loss due to side reactions
 p.ageing=0; %toggles ageing. Choose 0 for no ageing
-
+p.ageingMech.Oxidation = 0;
+p.ageingMech.SEI = 0;
+p.ageingMech.LPL = 0;
+p.LimitedSEI = 0;
 %Specification of simplifications. See Ref 1 for how the simplifications
 %are defined. Note that choosing 0 is not recommended for the 
 %simplifications that can be made on the parameters kappa, De, dlnfdce,
@@ -1203,7 +1395,7 @@ p.simp.Ds_pos = 1; %Choice of simplification for Ds_pos. Choices: 0: no simplifi
 p.simp.butler_volmer = 0; %Choice of simplification for the butler-volmer equation. Choices: 0: no simplification, 1: [S1] (linearized Butler-Volmer)
 p.simp.solid_phase_diffusion = 0;
 
-p.set_simp = [1 1 1 1 0 0]; %compact specification of grid parameters
+p.set_simp = [2 2 2 2 1 0]; %compact specification of grid parameters
 %-------------------------------------------------------------------------%
 %- DFN model parameters --------------------------------------------------%
 %- Most of the default parameters have been taken from Torchio et al, 2016%
@@ -1274,6 +1466,7 @@ p.De = @(T) 2.0524e-10*exp((5000/(8.3145))*((1/298)-(1/T)));
 
 %Equilbrium potentials
 %Must be anonymous function with input the stoichiometry 
+p.equil_mode=0;
 p.U_pos = @(theta_p) (-4.656+88.669*theta_p.^2 - 401.119*theta_p.^4 + 342.909*theta_p.^6 - 462.471*theta_p.^8 + 433.434*theta_p.^10)./...
                (-1+18.933*theta_p.^2-79.532*theta_p.^4+37.311*theta_p.^6-73.083*theta_p.^8+95.96*theta_p.^10);
 
@@ -1296,13 +1489,23 @@ p.hc = 0.8915; %Convective heat transfer coefficient [W/K]
 p.Cp = 500; % Heat capacity [J/kg/K]
 
 %Ageing parameters
-p.U2 = 0.21; %Equilibrium potential of the side reactions
-p.i02 = @(T) 10*(1.34368000000001e-11*T.^2-7.29948384000006e-09*T+9.9367796744801e-07); %Exchange current density of the side reactions
-p.alpha_c2 = 0.7;
-p.V_SEI = 2e-6; % Molar volume of the SEI
-p.sigma_SEI = 2.3e-6; %Conductivity of the SEI
-p.Cbat_init = 0;
+p.i0C = 7e-42;
+p.i02 = 0.016;
+p.i0lpl=4e-4;
+p.alpha_c2=0.5;
+p.alphaa_lpl=0.3;
+p.alphac_lpl=0.7;
+p.alpha_a2=0.5;
+p.B1_l=15;
+p.B2_l=-5;
+p.B1_s=25;
+p.B2_s=-5;
+p.BO=5;
+p.lamda_sei=15;
+p.TotCycle=1;
+
 end
+
 
 %Functions for printing
 function dispstat(TXT,varargin)
@@ -1390,10 +1593,10 @@ if keepthis == 1
     prevCharCnt = 0;
 end
 end
-function print_loop(t1,time_max,i_app,V,k,sim_time)
+function print_loop(t1,time_max,i_app,V,k,sim_time,mem)
 dispstat(sprintf(['-------------------------------------------\nTime: %g/',num2str(time_max),...
-    ' (%.0f %%) \ni_app: %g A\nVoltage: %g V\nNumber of iterations for convergence: %d \nTime elapsed: ',num2str(sim_time,'%2.2f'),'\n-------------------------------------------'],...
-    t1,t1/time_max*100,i_app,V,k));
+    ' (%.0f %%) \ni_app: %g A\nVoltage: %g V\nNumber of iterations for convergence: \nCycle Number: %d \nTime elapsed: ',num2str(sim_time,'%2.2f'),'\n-------------------------------------------'],...
+    t1,t1/time_max*100,i_app,V,k, mem.CycleNo));
 end
 
 function Yi = qinterp1(x,Y,xi,methodflag)
