@@ -87,7 +87,7 @@ par_or.EMF = p.EMF; par_or.U_pos = p.U_pos_out; par_or.U_neg = p.U_neg_out;
 par_or.dU_pos = p.dU_pos; par_or.dU_neg = p.dU_neg; 
 par_or.cs_max_neg = p.cs_max_neg; par_or.cs_max_pos = p.cs_max_pos; 
 m.dummy = 0; 
-m = fcn_system_matrices(p,m,p.T_amb);
+m = fcn_system_matrices(ones(p.nn,1),p,m,p.T_amb);
 
 [cs_prevt, ce_prevt, phis_prev,T_prevt,Cl_prevt,Rf] = init(p,m,init_cond);
 max_prealloc_size = 2e8;
@@ -110,8 +110,8 @@ eta_ox = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 j2 = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 jlpl = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 Fac = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
-CeRat=zeros(p.nnp,1,min(max_prealloc_size,round(time_max/p.dt)));
-FacT = zeros(p.nnp,1,min(max_prealloc_size,round(time_max/p.dt)));
+CeRat=zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+FacT = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 j1 = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 j_ox = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 epse_neg_temp = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
@@ -161,10 +161,11 @@ mem.CycleTimeStamp(1) = 0;
 mem.Cbat_aged_current = p.Cbat;
 
 warning_set = 0;
-t_vec = 1; 
+t_vec = 0; 
 end_simulation = 0; 
 solution_time = 0;
 num_iter = 0; 
+early_term_PE = 0;
 max_iterations = 0;
 dt_or = p.dt; 
 %% Simulation
@@ -218,7 +219,7 @@ while not(end_simulation)
         i_app(t+1) = F_current(t_vec(t+1));  
     end
     if(not(isequal(dt_prev,p.dt)))
-        m = fcn_system_matrices(p,m,T_prevt);
+        m = fcn_system_matrices(cs_prevt,p,m,T_prevt);
     end
     
     m = fcn_system_matrices2(p,m,cs_prevt,ce_prevt,T_prevt); 
@@ -349,6 +350,7 @@ while not(end_simulation)
     end
     if t>5 &&(t_vec(t)-t_vec(t-5))<1e-4
         end_simulation = 1;
+        early_term_PE = 1;
         warning('Simulation is not progressing. Stopping the simulation. Most likely causes are: too high applied current, ce close 0, cs close to cs_max or close to 0')
     end
     if end_simulation==1
@@ -399,6 +401,23 @@ p.L = p.delta_neg+p.delta_sep+p.delta_pos;
 % Store states
 % out.x = [p.dx_n/2*(1:2:(p.nn*2-1)) p.delta_neg+[p.dx_s/2*(1:2:(p.ns*2-1))]...
 %         p.delta_neg+p.delta_sep+p.dx_p/2*(1:2:(p.np*2-1))]'/p.L; 
+if early_term_PE
+    for i = 1:5
+        t_vec(n_t-i) = [];
+        cs(:,n_t-i) = [];
+        ce(:,n_t-i) = [];
+        phis(:,n_t-i) = [];
+        phie(:,n_t-i) = [];
+        jn(:,n_t-i) = [];
+        U(:,n_t-i) = [];
+        eta(:,n_t-i) = [];
+        V(:,n_t-i) = [];
+        i_app(:,n_t-i) = [];
+        T(:,n_t-i) = [];
+        soc(:,n_t-i) = [];
+    end
+    n_t = t_vec(end)+1;
+end
 out.t = t_vec(2:n_t); 
 % out.cs = cs(:,2:n_t);
 out.ce = ce(:,2:n_t); 
@@ -489,8 +508,11 @@ phie = m.Gamma_phie*i_app+m.Phi_phie*phis+m.Pi_phie*log(ce);
 phie_bar = m.Aphie_bar*phie; 
 
 if p.ageing
-
-    eta2 = phis-phie_bar-p.Rf.*p.F.*jn;
+    %The definition of your eta2 implementation depends on where you assume
+    %ageing takes place. Our assumption is based on the outcomes of [le
+    %Roux et. al. JPS 2026]
+    % eta2 = phis-phie_bar-p.Rf.*p.F.*jn;
+    eta2 = phis-phie_bar;
     if p.ageingMech.SEI && p.LimitedSEI
         Fac=exp(-p.Rf*(p.lamda_sei));
         j2 = Fac.*(p.i02/p.F).*(-(exp(-p.alpha_c2*p.F/(p.R*T)*eta2)));
@@ -555,7 +577,7 @@ if p.set_simp(2)==0
 end
 
 if p.set_simp(4)==0
-    m = Ds_matrices(T,p,m); 
+    m = Ds_matrices(cs_bar(1:p.nn)/p.cs_max_neg,cs_bar(p.nn+1:end)/p.cs_max_pos,T,p,m); 
     if p.set_simp(6)
         m.Theta_cs = -m.Acs_hat_inv*[cs_prevt(1:p.nnp);zeros(p.nnp,1)]; 
     else
@@ -623,8 +645,11 @@ djndphis = -m.Bphis_inv*m.Aphis;
 dphiedphis = m.Phi_phie_bar+m.Pi_phie_bar*diag(1./ce)*m.Phi_ce;  
 
 if p.ageing
-   
-    deta2dphis = eye(p.nnp)-dphiedphis-diag(p.F*p.Rf)*djndphis;
+    %The definition of your eta2 implementation depends on where you assume
+    %ageing takes place. Our assumption is based on the outcomes of [le
+    %Roux et. al. JPS 2026]
+    % deta2dphis = eye(p.nnp)-dphiedphis-diag(p.F*p.Rf)*djndphis;
+    deta2dphis = eye(p.nnp)-dphiedphis;
     % SEI Formation
     
     if p.LimitedSEI
@@ -863,7 +888,7 @@ end
 Closs = x_prev(5); 
 end
 
-function [ m ] = fcn_system_matrices( p,m,T )
+function [ m ] = fcn_system_matrices(stoichn, p,m,T )
 %-------------------------------------------------------------------------%
 %- This function defines the system matrices that do not change in the ---%
 %- Inner loop. The matrices that do change in the inner loop are placed --%
@@ -877,7 +902,11 @@ Acs_jn = sparse(fcn_Acs_j(p.nrn));
 m.Acs_jp = sparse(fcn_Acs_j(p.nrp));
 if isa(p.Ds_neg,'function_handle') 
 
-    Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(T)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+    if nargin(p.Ds_neg)>1
+        Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(stoichn,p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+    else
+        Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg(p.T_amb)*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
+    end
 
 else 
     Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
@@ -926,7 +955,7 @@ if p.set_simp(2)==2 || p.set_simp(2)==0
 end
 
 if p.set_simp(4)==2 || p.set_simp(4)== 0
-    m = Ds_matrices(T,p,m); 
+    m = Ds_matrices(ones(p.nn,1),ones(p.np,1),T,p,m); 
 end
 
 if p.set_simp(1)==2 || p.set_simp(1) == 0 
@@ -943,8 +972,9 @@ end
 
 if p.set_simp(4)==1
     cs_bar = m.Acs_bar*cs_prevt; 
-    m = Ds_matrices(T,p,m); 
+    m = Ds_matrices(cs_bar(1:p.nn)/p.cs_max_neg,cs_bar(p.nn+1:end)/p.cs_max_pos,p.T_amb,p,m);
 end
+
 
 if p.set_simp(1)==1
     m = kappa_matrices(ce_prevt,T,p,m); 
@@ -982,12 +1012,20 @@ function m = De_matrices(ce,T,p,m)
     m.Phi_ce_bar = m.Ace_bar*m.Phi_ce; 
 end
 
-function m = Ds_matrices(T,p,m)
+function m = Ds_matrices(stoichn,stoichp,T,p,m)
     if p.set_simp(6)
-        p.Ds = [p.Ds_neg(T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(T)]; 
+        if nargin(p.Ds_neg)>1&&nargin(p.Ds_pos)>1
+            p.Ds = [p.Ds_neg(stoichn,T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(stoichp,T)]; 
+        else
+            p.Ds = [p.Ds_neg(T)*ones(p.nn,1); ones(p.np,1).*p.Ds_pos(T)]; 
+        end
         m.Bcs_hat = [-diag(3*p.dt./p.Rs); diag(p.Rs./(5*p.Ds))]; 
     else
-        Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(T))'*kron(speye(p.np), ones(1,p.nrp))));
+        if nargin(p.Ds_pos)>1
+            Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(stoichp,T))'*kron(speye(p.np), ones(1,p.nrp))));
+        else
+            Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(T))'*kron(speye(p.np), ones(1,p.nrp))));
+        end
         Acs_hat_p = p.dt*Acs_p-speye(p.nrp*p.np);
         Acs_hat_inv_p = inv(Acs_hat_p); 
         m.Acs_hat_inv = blkdiag(m.Acs_hat_inv_n,Acs_hat_inv_p);  
@@ -1107,16 +1145,22 @@ parnames = {'kappa' 'dlnfdce' 'Ds_pos'};
 for i = 1:length(parnames)
     if not(isa(p.(parnames{i}),'function_handle')) || p.set_simp(i)==2
         if isa(p.(parnames{i}),'function_handle')
-
+            if nargin(p.(parnames{i}))>1
+                 p.(parnames{i}) = p.(parnames{i})(p.ce0,p.T_amb); 
+            else
+                   
                  p.(parnames{i}) = p.(parnames{i})(p.T_amb); 
             
+            end
         end
         p.(parnames{i}) = @(c,T) p.(parnames{i}); 
         p.set_simp(i) = 2; 
+        
     end
 end
-%if isa(p.De,'function_handle') p.De = @(T) p.De; end 
+if not(isa(p.De,'function_handle')) p.De = @(T) p.De; end 
 if not(isa(p.i02,'function_handle')) p.i02 = @(T) p.i02; end 
+if not(isa(p.Ds_neg,'function_handle')) p.Ds_neg = @(T) p.Ds_neg; end 
 
 if not(isa(p.dU_dT_neg,'function_handle')) p.dU_dT_neg= @(stoich) p.dU_dT_neg*ones(p.nn,1); end
 if not(isa(p.dU_dT_pos,'function_handle')) p.dU_dT_pos= @(stoich) p.dU_dT_pos*ones(p.np,1); end
@@ -1129,7 +1173,7 @@ if nargin(p.De)>1
 else
     p.De_eff = @(T) p.De(T).*p.eps_e.^p.brug; 
 end
-p.Ds_pos=@(T) p.Ds_pos(T);
+%p.Ds_pos=@(T) p.Ds_pos(T);
 
 % p.elec_range specifies the range of the electrodes throughout the cell.
 p.elec_range = [linspace(1,p.nn,p.nn) linspace(p.nns+1,p.nx, p.np)];
@@ -1324,7 +1368,7 @@ p.set_grid = [p.grid.nn p.grid.ns p.grid.np p.grid.nrn p.grid.nrp]; %compact spe
  
 p.tol = 1e-3; %Tolerance for convergence                                                                     
 p.iter_max = 1e2; %Maximum iterations for the Newton's algorithm for solving the algebraic equations
-p.Vmin = 1; p.Vmax = 6; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
+p.Vmin = 2.5; p.Vmax = 6; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
 p.verbose = 2; %verbosity of the toolbox. Allowable settings: 0. no verbosity, 1. only indicate starting and ending of simulation with computation time, 2. in addition to 1, also show current and voltage while simulating
 
 p.current_interp = 'linear'; %Interpolation method if input is given as an array. Choose any of the methods specified in the documenation of the MATLAB griddedInterpolant function
@@ -1351,7 +1395,7 @@ p.simp.Ds_pos = 1; %Choice of simplification for Ds_pos. Choices: 0: no simplifi
 p.simp.butler_volmer = 0; %Choice of simplification for the butler-volmer equation. Choices: 0: no simplification, 1: [S1] (linearized Butler-Volmer)
 p.simp.solid_phase_diffusion = 0;
 
-p.set_simp = [1 1 1 1 0 0]; %compact specification of grid parameters
+p.set_simp = [2 2 2 2 1 0]; %compact specification of grid parameters
 %-------------------------------------------------------------------------%
 %- DFN model parameters --------------------------------------------------%
 %- Most of the default parameters have been taken from Torchio et al, 2016%
@@ -1456,6 +1500,7 @@ p.B1_l=15;
 p.B2_l=-5;
 p.B1_s=25;
 p.B2_s=-5;
+p.BO=5;
 p.lamda_sei=15;
 p.TotCycle=1;
 
