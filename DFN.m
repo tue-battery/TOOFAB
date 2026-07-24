@@ -1,6 +1,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
-% V1.5.4
+% V1.5.5 
+%
 %
 % Simulation of the DFN model
 % 
@@ -62,10 +63,10 @@ elseif size(input,2)==2
     F_current = griddedInterpolant(input(:,1),input(:,2),p.current_interp,p.current_extrap); 
     i_app = F_current(0); 
 elseif size(input,2)==3
-    input_mode = 1; 
-    F_current = griddedInterpolant(input(:,1),input(:,2),p.current_interp,p.current_extrap); 
-    i_app = F_current(0); 
-    input_temperature=input(:,3);
+    input_mode = 1;
+    F_current = griddedInterpolant(input(:,1),input(:,2),p.current_interp,p.current_extrap);
+    i_app = F_current(0);
+    F_temperature = griddedInterpolant(input(:,1),input(:,3),p.current_interp,p.current_extrap);
 elseif isscalar(input)
     input_mode = 0;
     i_app = input;
@@ -94,9 +95,9 @@ max_prealloc_size = 2e8;
 phis = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 phie = zeros(p.nx,min(max_prealloc_size,round(time_max/p.dt)));
 if p.set_simp(6)
-    cs = zeros(p.np*2+p.nn*2,round(time_max/p.dt));
+    cs = zeros(p.np*2+p.nn*2,min(max_prealloc_size,round(time_max/p.dt)));
 else
-    zeros(p.np*p.nrp+p.nn*p.nrn,min(max_prealloc_size,round(time_max/p.dt)));
+    cs = zeros(p.np*p.nrp+p.nn*p.nrn,min(max_prealloc_size,round(time_max/p.dt)));
 end
 ce = zeros(p.nx,min(max_prealloc_size,round(time_max/p.dt)));
 jn = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
@@ -129,9 +130,7 @@ soc_prevt = soc;
 if soc <0 || soc>1+1e-3
     warning('Initial SOC = %d not in the range of [0,1]',soc)
 end
-if isa(p.k0,'function_handle')
-    p.k0 = p.k0f(T_prevt); 
-end
+p.k0 = p.k0f(T_prevt);
 %- prev indicates the condition of the state at k-1
 
 V(1) = phis_prev(end)-phis_prev(1);
@@ -227,7 +226,7 @@ while not(end_simulation)
     % Solve set of AEs using Newton's method at time t
     for k=1:p.iter_max
         % Obtain function matrix and Jacobian       
-        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),j2(:,t+1),jlpl(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),j_ox(:,t+1),U(:,t+1),p,m,Fac(:,t+1),CeRat(:,t+1)] = fcn_F(phis_prev,ce_prevt,cs_prevt,FacT(:,t),T_prevt,i_app(t+1),p,m);
+        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),j2(:,t+1),jlpl(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),j_ox(:,t+1),U(:,t+1),p,m,Fac(:,t+1),CeRat(:,t+1),j1_curr] = fcn_F(phis_prev,ce_prevt,cs_prevt,FacT(:,t),T_prevt,i_app(t+1),p,m);
         conv_check = norm(F_phis,2); 
         num_iter = num_iter+1; 
        % If algorithm doesn't converge, then display a warning
@@ -248,7 +247,7 @@ while not(end_simulation)
             kl = 1;
             break
         end
-        [J_phis,p] = fcn_J(cs(:,t+1),ce(:,t+1),FacT(:,t),CeRat(:,t),jn(:,t+1),jn(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),T_prevt,p,m); 
+        [J_phis,p] = fcn_J(cs(:,t+1),ce(:,t+1),FacT(:,t),CeRat(:,t),jn(:,t+1),j1_curr,i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),T_prevt,p,m);
         
         if t==1
             phis_prev = real(phis_prev-(J_phis\F_phis)); 
@@ -276,11 +275,9 @@ while not(end_simulation)
         FacT(1:p.nn,t+1)=FacT(1:p.nn,t)-(jlpl(1,t+1));
         Rf(:,t+1) = Rf_prevt-p.dt*(p.B1_s).*j2(:,t+1)-p.dt*(p.B1_l).*jlpl(:,t+1); 
 
-        if epse_neg_temp(:,t)>0
-            epse_neg_temp(:,t+1) = epse_neg_temp(:,t) + p.dt*p.B2_s.*j2(:,t+1)+ p.dt*p.B2_l.*jlpl(:,t+1); 
-        else
-            epse_neg_temp(:,t+1)=epse_neg_temp(:,t);
-        end
+        idx_eps_pos = epse_neg_temp(:,t)>0;
+        epse_neg_temp(:,t+1) = epse_neg_temp(:,t);
+        epse_neg_temp(idx_eps_pos,t+1) = epse_neg_temp(idx_eps_pos,t) + p.dt*p.B2_s.*j2(idx_eps_pos,t+1)+ p.dt*p.B2_l.*jlpl(idx_eps_pos,t+1);
         
         %Cathode Oxidation
         % BO = -0.001;
@@ -321,8 +318,8 @@ while not(end_simulation)
     
     if p.thermal_dynamics
         T(t+1) = fcn_T(jn(:,t+1), U(:,t+1),stoich,V(t+1),i_app(t+1),T_prevt, p);
-    elseif exist('input_temperature','var')==1
-        T(t+1) = input_temperature(t); 
+    elseif exist('F_temperature','var')==1
+        T(t+1) = F_temperature(t_vec(t+1));
     else
         if input_mode==2 && isfield(mem,'T_amb') 
             T(t+1)=mem.T_amb;
@@ -378,8 +375,8 @@ while not(end_simulation)
             Rf_prevt = Rf(:,t+1); 
             p.Rf = Rf_prevt;
         end
-        if isa(p.k0,'function_handle') && p.thermal_dynamics
-            p.k0 = p.k0f(T_prevt); 
+        if p.thermal_dynamics
+            p.k0 = p.k0f(T_prevt);
         end
         t = t+1;
     end
@@ -430,7 +427,7 @@ else
 end
 % out.stoich = [out.cs_bar(1:p.nn,:)/p.cs_max_neg; NaN(p.ns,n_t-1); out.cs_bar(p.nns+1:end,:)/p.cs_max_pos]; 
 % out.jn = [jn(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jn(p.nn+1:end,2:n_t)];  
-out.j_ox=j_ox;
+out.j_ox=j_ox(:,2:n_t);
 out.U = [U(1:p.nn,2:n_t); NaN(p.ns,n_t-1); U(p.nn+1:end,2:n_t)];  
 out.eta = [eta(1:p.nn,2:n_t); NaN(p.ns,n_t-1); eta(p.nn+1:end,2:n_t)]; 
 out.V = V(2:n_t); 
@@ -457,12 +454,12 @@ if p.ageing
     out.ageing.jlpl = [jlpl(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jlpl(p.nn+1:end,2:n_t)]; 
     out.ageing.Fac= [Fac(1:p.nn,2:n_t); NaN(p.ns,n_t-1); Fac(p.nn+1:end,2:n_t)]; 
     out.ageing.eta2 = [eta2(1:p.nn,2:n_t); NaN(p.ns,n_t-1); eta2(p.nn+1:end,2:n_t)]; 
-    out.ageing.eta_ox=eta_ox;
+    out.ageing.eta_ox=eta_ox(:,2:n_t);
     % out.states_end.Closs = Cl(n_t); 
     % out.states_end.Rf = out.ageing.Rf; 
     out.ageing.epse_neg = [epse_neg_temp(1:p.nn,2:n_t); NaN(p.ns,n_t-1); epse_neg_temp(p.nn+1:end,2:n_t)];
     out.ageing.epss_pos = epss_pos_temp(:,2:n_t);
-    out.ageing.LPLConc= FacT;
+    out.ageing.LPLConc= FacT(:,2:n_t);
     out.stoichs=stoichs;
 end
 
@@ -498,7 +495,7 @@ cs_avg = sum(3/p.R_neg^3*(fx_kp1+fx_k)/2*dr_n);
 soc = (cs_avg/p.cs_max_neg-p.s0_neg)/(p.s100_neg-p.s0_neg); 
 end
 
-function [ F_phis,cs,ce,phie,jn,j2,jlpl,i0,eta,eta2,eta_ox,j_ox,U,p,m,Fac,CeRat] = fcn_F(phis,ce_prevt,cs_prevt,FacLPL,T,i_app,p,m)
+function [ F_phis,cs,ce,phie,jn,j2,jlpl,i0,eta,eta2,eta_ox,j_ox,U,p,m,Fac,CeRat,j1] = fcn_F(phis,ce_prevt,cs_prevt,FacLPL,T,i_app,p,m)
 %-------------------------------------------------------------------------%
 %- Compute F_phis and J_phis ---------------------------------------------%
 %-------------------------------------------------------------------------% 
@@ -1103,22 +1100,15 @@ p.dr_n=p.R_neg/(p.nrn-1);
 p.dr_p=p.R_pos/(p.nrp-1);
 
 
-if not(p.thermal_dynamics)
-    if not(isa(p.k0_neg,'function_handle')) p.k0_neg = @(T) p.k0_neg; end
-    if not(isa(p.k0_pos,'function_handle')) p.k0_pos = @(T) p.k0_pos; end  
-    %p.k0 = [p.k0_neg(p.T_amb)*ones(p.nn,1); p.k0_pos(p.T_amb)*ones(p.np,1)];
-    p.k0 = @(T) [p.k0_neg(T)*ones(p.nn,1); p.k0_pos(T)*ones(p.np,1)];
-    p.k0f = p.k0;
-else
-    if isa(p.k0_neg,'function_handle') || isa(p.k0_pos,'function_handle')
-        if not(isa(p.k0_neg,'function_handle')) p.k0_neg = @(T) p.k0_neg; end
-        if not(isa(p.k0_pos,'function_handle')) p.k0_pos = @(T) p.k0_pos; end  
-        p.k0 = @(T) [p.k0_neg(T)*ones(p.nn,1); p.k0_pos(T)*ones(p.np,1)];
-        p.k0f = p.k0; 
-    else
-        p.k0 = [p.k0_neg*ones(p.nn,1); p.k0_pos*ones(p.np,1)];
-    end
-end
+% k0_neg/k0_pos may be given as scalars or as functions of T. Always wrap
+% them as functions of T (a constant just becomes a function that ignores
+% its input), so p.k0f is unconditionally a function handle downstream -
+% the simulation loop can then unconditionally re-evaluate it at the
+% current temperature without needing to guard on whether p.k0f exists.
+if not(isa(p.k0_neg,'function_handle')) p.k0_neg = @(T) p.k0_neg; end
+if not(isa(p.k0_pos,'function_handle')) p.k0_pos = @(T) p.k0_pos; end
+p.k0 = @(T) [p.k0_neg(T)*ones(p.nn,1); p.k0_pos(T)*ones(p.np,1)];
+p.k0f = p.k0;
 
 p.Rs = [p.R_neg*ones(p.nn,1); p.R_pos*ones(p.np,1)]; 
 if length(p.Rf_neg)<p.nn
