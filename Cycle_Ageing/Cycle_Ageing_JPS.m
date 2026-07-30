@@ -13,24 +13,23 @@ p.Cbat=Equil2.Cbat;
     p.ageingMech.Oxidation = 1; %cathode oxidation
     p.ageingMech.SEI = 1; %SEI formation
     p.ageingMech.LPL = 1; %lithium plating
-    p.LimitedSEI=1; %SEI limitation
+    p.ageingMech.LimitedSEI=1; %SEI limitation
     
     %Setting Ageing Parameters
     %SEI formation
-    p.i02 = 0.016;
+    p.i0sei = 0.016;
     p.B1_s=25;
     p.B2_s=5;
     p.lamda_sei = 15;
-    p.alpha_c2=0.6;
+    p.acsei=0.6;
     %lithium plating
     p.i0lpl=4.1e-4;
     p.B1_l=15;
     p.B1_l=1.5;
-    p.alphaa_lpl=0.3;
-    p.alphac_lpl=0.7;
+    p.ac_lpl=0.7;
     %Cathode Oxidation
-    p.i0C=7e-42;
-    p.alpha_a2=0.5;
+    p.i0ox=7e-42;
+    p.aa_ox=0.5;
     p.BO=20;
 
     %Timestamp variables
