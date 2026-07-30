@@ -22,7 +22,7 @@ p.Cbat=Equil2.Cbat;
     p.B1_s=25;
     p.B2_s=5;
     p.lamda_sei = 15;
-    p.acsei=0.6;
+    p.ac_sei=0.6;
     %lithium plating
     p.i0lpl=4.1e-4;
     p.B1_l=15;
