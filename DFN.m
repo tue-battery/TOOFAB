@@ -108,7 +108,7 @@ V = zeros(1,min(max_prealloc_size,round(time_max/p.dt)));
 T = zeros(1,min(max_prealloc_size,round(time_max/p.dt)));
 eta2 = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 eta_ox = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
-j2 = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
+jsei = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 jlpl = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 Fac = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 CeRat=zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
@@ -123,7 +123,7 @@ epss_pos_temp(:,1) = p.epss_pos;
 scount=1;
 if p.ageing
     se_init = [p.s100_neg; p.s100_pos; p.s0_neg; p.s0_pos]; 
-    p.i02 = p.i02f(T_prevt); 
+    p.i0sei = p.i0seif(T_prevt); 
 end
 soc = compute_soc(cs_prevt,p); 
 soc_prevt = soc; 
@@ -226,7 +226,7 @@ while not(end_simulation)
     % Solve set of AEs using Newton's method at time t
     for k=1:p.iter_max
         % Obtain function matrix and Jacobian       
-        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),j2(:,t+1),jlpl(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),j_ox(:,t+1),U(:,t+1),p,m,Fac(:,t+1),CeRat(:,t+1),j1_curr] = fcn_F(phis_prev,ce_prevt,cs_prevt,FacT(:,t),T_prevt,i_app(t+1),p,m);
+        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),jsei(:,t+1),jlpl(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),j_ox(:,t+1),U(:,t+1),p,m,Fac(:,t+1),CeRat(:,t+1),j1_curr] = fcn_F(phis_prev,ce_prevt,cs_prevt,FacT(:,t),T_prevt,i_app(t+1),p,m);
         conv_check = norm(F_phis,2); 
         num_iter = num_iter+1; 
        % If algorithm doesn't converge, then display a warning
@@ -270,14 +270,14 @@ while not(end_simulation)
     if p.ageing   
         %SEI Formation
  
-        Closs_SEI(t+1) = Closs_SEI(t) + p.F*p.dt*p.dx_n*p.A_surf*(sum(abs(j2(1:p.nn,t+1).*p.a_s(1:p.nn))));
+        Closs_SEI(t+1) = Closs_SEI(t) + p.F*p.dt*p.dx_n*p.A_surf*(sum(abs(jsei(1:p.nn,t+1).*p.a_s(1:p.nn))));
         Closs_LPL(t+1) = Closs_LPL(t) - p.F*p.dt*p.dx_n*p.A_surf*(sum(jlpl(1:p.nn,t+1).*abs(p.a_s(1:p.nn))));
         FacT(1:p.nn,t+1)=FacT(1:p.nn,t)-(jlpl(1,t+1));
-        Rf(:,t+1) = Rf_prevt-p.dt*(p.B1_s).*j2(:,t+1)-p.dt*(p.B1_l).*jlpl(:,t+1); 
+        Rf(:,t+1) = Rf_prevt-p.dt*(p.B1_s).*jsei(:,t+1)-p.dt*(p.B1_l).*jlpl(:,t+1); 
 
         idx_eps_pos = epse_neg_temp(:,t)>0;
         epse_neg_temp(:,t+1) = epse_neg_temp(:,t);
-        epse_neg_temp(idx_eps_pos,t+1) = epse_neg_temp(idx_eps_pos,t) + p.dt*p.B2_s.*j2(idx_eps_pos,t+1)+ p.dt*p.B2_l.*jlpl(idx_eps_pos,t+1);
+        epse_neg_temp(idx_eps_pos,t+1) = epse_neg_temp(idx_eps_pos,t) + p.dt*p.B2_s.*jsei(idx_eps_pos,t+1)+ p.dt*p.B2_l.*jlpl(idx_eps_pos,t+1);
         
         %Cathode Oxidation
         % BO = -0.001;
@@ -371,7 +371,7 @@ while not(end_simulation)
         soc_prevt = soc(t+1); 
         if p.ageing
             Cl_prevt = Cl(t+1); 
-            p.i02 = p.i02f(T_prevt); 
+            p.i0sei = p.i0seif(T_prevt); 
             Rf_prevt = Rf(:,t+1); 
             p.Rf = Rf_prevt;
         end
@@ -416,7 +416,7 @@ if early_term_PE
     n_t = t_vec(end)+1;
 end
 out.t = t_vec(2:n_t); 
-% out.cs = cs(:,2:n_t);
+out.cs = cs(:,2:n_t);
 out.ce = ce(:,2:n_t); 
 out.phis = [phis(1:p.nn,2:n_t); NaN(p.ns,n_t-1); phis(p.nn+1:end,2:n_t)]; 
 out.phie = phie(:,2:n_t); 
@@ -425,9 +425,9 @@ if p.set_simp(6)
 else
     out.cs_bar = [cs(p.nrn:p.nrn:p.nrn*p.nn,2:n_t); NaN(p.ns,n_t-1); cs(p.nrn*p.nn+p.nrp:p.nrp:end,2:n_t)];
 end
-% out.stoich = [out.cs_bar(1:p.nn,:)/p.cs_max_neg; NaN(p.ns,n_t-1); out.cs_bar(p.nns+1:end,:)/p.cs_max_pos]; 
-% out.jn = [jn(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jn(p.nn+1:end,2:n_t)];  
-out.j_ox=j_ox(:,2:n_t);
+out.stoich = [out.cs_bar(1:p.nn,:)/p.cs_max_neg; NaN(p.ns,n_t-1); out.cs_bar(p.nns+1:end,:)/p.cs_max_pos]; 
+out.jn = [jn(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jn(p.nn+1:end,2:n_t)];  
+
 out.U = [U(1:p.nn,2:n_t); NaN(p.ns,n_t-1); U(p.nn+1:end,2:n_t)];  
 out.eta = [eta(1:p.nn,2:n_t); NaN(p.ns,n_t-1); eta(p.nn+1:end,2:n_t)]; 
 out.V = V(2:n_t); 
@@ -440,23 +440,23 @@ out.mem = mem;
 
 if p.ageing
     % [out.ageing.Cbat_aged,sbat] = fcn_Q(Cl(n_t),se_init,1,p); 
-    out.Cl_ox=Closs_ox(2:n_t);
-    out.Closs_SEI=Closs_SEI(2:n_t);
-    out.Closs_LPL=Closs_LPL(2:n_t);
-    out.Cl=Cl(2:n_t);
+    out.ageing.Cl_ox=Closs_ox(2:n_t);
+    out.ageing.Closs_SEI=Closs_SEI(2:n_t);
+    out.ageing.Closs_LPL=Closs_LPL(2:n_t);
     out.ageing.s0_neg_aged = sbat(3); 
     out.ageing.s100_neg_aged = sbat(1);
     out.ageing.s0_pos_aged = sbat(4);
     out.ageing.s100_pos_aged = sbat(2);
     out.ageing.Closs = Cl(2:n_t); 
     out.ageing.Rf = [Rf(1:p.nn,2:n_t); NaN(p.ns,n_t-1); Rf(p.nn+1:end,2:n_t)];
-    out.ageing.j2 = [j2(1:p.nn,2:n_t); NaN(p.ns,n_t-1); j2(p.nn+1:end,2:n_t)]; 
+    out.ageing.jsei = [jsei(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jsei(p.nn+1:end,2:n_t)]; 
     out.ageing.jlpl = [jlpl(1:p.nn,2:n_t); NaN(p.ns,n_t-1); jlpl(p.nn+1:end,2:n_t)]; 
-    out.ageing.Fac= [Fac(1:p.nn,2:n_t); NaN(p.ns,n_t-1); Fac(p.nn+1:end,2:n_t)]; 
+    out.j_ox=j_ox(:,2:n_t);
+    out.ageing.SEIFac= [Fac(1:p.nn,2:n_t); NaN(p.ns,n_t-1); Fac(p.nn+1:end,2:n_t)]; 
     out.ageing.eta2 = [eta2(1:p.nn,2:n_t); NaN(p.ns,n_t-1); eta2(p.nn+1:end,2:n_t)]; 
     out.ageing.eta_ox=eta_ox(:,2:n_t);
-    % out.states_end.Closs = Cl(n_t); 
-    % out.states_end.Rf = out.ageing.Rf; 
+    out.states_end.Closs = Cl(n_t); 
+    out.states_end.Rf = out.ageing.Rf(:,end); 
     out.ageing.epse_neg = [epse_neg_temp(1:p.nn,2:n_t); NaN(p.ns,n_t-1); epse_neg_temp(p.nn+1:end,2:n_t)];
     out.ageing.epss_pos = epss_pos_temp(:,2:n_t);
     out.ageing.LPLConc= FacT(:,2:n_t);
@@ -495,7 +495,7 @@ cs_avg = sum(3/p.R_neg^3*(fx_kp1+fx_k)/2*dr_n);
 soc = (cs_avg/p.cs_max_neg-p.s0_neg)/(p.s100_neg-p.s0_neg); 
 end
 
-function [ F_phis,cs,ce,phie,jn,j2,jlpl,i0,eta,eta2,eta_ox,j_ox,U,p,m,Fac,CeRat,j1] = fcn_F(phis,ce_prevt,cs_prevt,FacLPL,T,i_app,p,m)
+function [ F_phis,cs,ce,phie,jn,jsei,jlpl,i0,eta,eta2,eta_ox,j_ox,U,p,m,Fac,CeRat,j1] = fcn_F(phis,ce_prevt,cs_prevt,FacLPL,T,i_app,p,m)
 %-------------------------------------------------------------------------%
 %- Compute F_phis and J_phis ---------------------------------------------%
 %-------------------------------------------------------------------------% 
@@ -510,14 +510,14 @@ if p.ageing
     %Roux et. al. JPS 2026]
     % eta2 = phis-phie_bar-p.Rf.*p.F.*jn;
     eta2 = phis-phie_bar;
-    if p.ageingMech.SEI && p.LimitedSEI
+    if p.ageingMech.SEI && p.ageingMech.LimitedSEI
         Fac=exp(-p.Rf*(p.lamda_sei));
-        j2 = Fac.*(p.i02/p.F).*(-(exp(-p.alpha_c2*p.F/(p.R*T)*eta2)));
-    elseif p.ageingMech.SEI && ~p.LimitedSEI
+        jsei = Fac.*(p.i0sei/p.F).*(-(exp(-p.acsei*p.F/(p.R*T)*eta2)));
+    elseif p.ageingMech.SEI && ~ p.ageingMech.LimitedSEI
         Fac=zeros(p.np+p.nn,1);
-        j2 = (p.i02/p.F).*(-(exp(-p.alpha_c2*p.F/(p.R*T)*eta2)));
+        jsei = (p.i0sei/p.F).*(-(exp(-p.ac_sei*p.F/(p.R*T)*eta2)));
     else 
-        j2 = zeros(p.nn+p.np,1); 
+        jsei = zeros(p.nn+p.np,1); 
         Fac=zeros(p.nn+p.np,1);
        
     end
@@ -528,7 +528,7 @@ if p.ageing
             end
 
             CeRat=[ce_prevt(1:10);ce_prevt(21:30)];
-            jlpl = (p.i0lpl/p.F).*(((FacLPL/1000).*exp(p.alphaa_lpl*p.F/(p.R*T)*eta2))-((CeRat/1000).*exp(-p.alphac_lpl*p.F/(p.R*T).*eta2)));
+            jlpl = (p.i0lpl/p.F).*(((FacLPL/1000).*exp((1-p.ac_lpl)*p.F/(p.R*T)*eta2))-((CeRat/1000).*exp(-p.ac_lpl*p.F/(p.R*T).*eta2)));
            
             jlpl(p.nn+1:end) = zeros(p.np,1); 
         
@@ -538,19 +538,19 @@ if p.ageing
     end
     if p.ageingMech.Oxidation
         eta_ox = phis-phie_bar;
-        j_ox = (p.i0C/p.F).*exp(p.alpha_a2*p.F/(p.R*T)*eta_ox);
+        j_ox = (p.i0ox/p.F).*exp(p.aa_ox*p.F/(p.R*T)*eta_ox);
     else 
         j_ox = zeros(p.nn+p.np,1);
         eta_ox = zeros(p.nn+p.np,1);
     end
-    j2(p.nn+1:end) = zeros(p.np,1); 
+    jsei(p.nn+1:end) = zeros(p.np,1); 
    
     Fac(p.nn+1:end)=zeros(p.np,1);
    
     j_ox(1:p.nn,:) = zeros(p.nn,1);
     eta_ox(1:p.nn,:) = zeros(p.nn,1); 
 else
-    j2 = zeros(p.nn+p.np,1); 
+    jsei = zeros(p.nn+p.np,1); 
     jlpl = zeros(p.nn+p.np,1); 
     Fac=zeros(p.nn+p.np,1);
     eta2 = zeros(p.nn+p.np,1);
@@ -558,7 +558,7 @@ else
     eta_ox = zeros(p.nn+p.np,1);
     CeRat=zeros(p.nn+p.np,1);
 end
-j1 = jn-j2-jlpl-j_ox; 
+j1 = jn-jsei-jlpl-j_ox; 
 if p.set_simp(6)==1
     cs = -m.Acs_hat_inv*(m.Bcs_hat*j1+[cs_prevt(1:p.nnp);zeros(p.nnp,1)]); 
 else
@@ -649,30 +649,30 @@ if p.ageing
     deta2dphis = eye(p.nnp)-dphiedphis;
     % SEI Formation
     
-    if p.LimitedSEI
-        dj2dphis = diag(exp(-p.Rf.*p.lamda_sei).*p.i02).*(p.alpha_c2/(p.R*T).*(exp(-p.alpha_c2*p.F/(p.R*T)*eta2)))*deta2dphis; 
+    if p.ageingMech.LimitedSEI
+        djseidphis = diag(exp(-p.Rf.*p.lamda_sei).*p.i0sei).*(p.ac_sei/(p.R*T).*(exp(-p.ac_sei*p.F/(p.R*T)*eta2)))*deta2dphis; 
     else 
-        dj2dphis = diag(p.i02*(p.alpha_c2/(p.R*T)*(exp(-p.alpha_c2*p.F/(p.R*T)*eta2))))*deta2dphis; 
+        djseidphis = diag(p.i0sei*(p.ac_sei/(p.R*T)*(exp(-p.ac_sei*p.F/(p.R*T)*eta2))))*deta2dphis; 
     end
-    dj2dphis(p.nn+1:end,:) = zeros(p.np,p.nnp); 
+    djseidphis(p.nn+1:end,:) = zeros(p.np,p.nnp); 
     
     % Lithium Plating
-    lpl_exp1 = exp(p.alphaa_lpl*p.F*eta/(p.R*T)); 
-    lpl_exp2 = exp(-p.alphac_lpl*p.F*eta/(p.R*T)); 
-    dexp1dphislpl = diag((FacLPL/1000)*p.i0lpl*p.alphaa_lpl/(p.R*T).*lpl_exp1)*deta2dphis; 
-    dexp2dphislpl = -diag((CeRat/1000)*p.i0lpl*p.alphac_lpl/(p.R*T).*lpl_exp2)*deta2dphis; 
+    lpl_exp1 = exp((1-p.ac_lpl)*p.F*eta/(p.R*T)); 
+    lpl_exp2 = exp(-p.ac_lpl*p.F*eta/(p.R*T)); 
+    dexp1dphislpl = diag((FacLPL/1000)*p.i0lpl*(1-p.ac_lpl)/(p.R*T).*lpl_exp1)*deta2dphis; 
+    dexp2dphislpl = -diag((CeRat/1000)*p.i0lpl*p.ac_lpl/(p.R*T).*lpl_exp2)*deta2dphis; 
     djlpldphis = dexp1dphislpl-dexp2dphislpl; 
 
     djlpldphis(p.nn+1:end,:) = zeros(p.np,p.nnp); 
 
     %Cathode Oxidation
     deta_oxdphis = eye(p.nnp)-dphiedphis;
-    dj_oxdphis = diag(p.i0C*p.alpha_a2/(p.R*T)*exp(p.alpha_a2*p.F/(p.R*T)*eta_ox))*deta_oxdphis;
+    dj_oxdphis = diag(p.i0ox*p.aa_ox/(p.R*T)*exp(p.aa_ox*p.F/(p.R*T)*eta_ox))*deta_oxdphis;
    
     dj_oxdphis(1:p.nn,:) = zeros(p.nn,p.nnp);
     
     %Total ageing effect
-    dj1dphis = djndphis-dj2dphis-djlpldphis-dj_oxdphis;
+    dj1dphis = djndphis-djseidphis-djlpldphis-dj_oxdphis;
 else
     dj1dphis = djndphis; 
     
@@ -793,8 +793,8 @@ else
     if length(init_cond)>1
         se_init = [p.s100_neg; p.s100_pos; p.s0_neg; p.s0_pos]; 
         Closs = fcn_Q_inv(init_cond(2),se_init,0,p);
-        j2_avg_tot = Closs/(p.F*p.dt*p.dx_n*p.A_surf*p.a_s_neg*p.nn); 
-        Rf = p.Rf+(p.dt*p.B1.*j2_avg_tot)*[ones(p.nn,1); zeros(p.np,1)]; 
+        jsei_avg_tot = Closs/(p.F*p.dt*p.dx_n*p.A_surf*p.a_s_neg*p.nn); 
+        Rf = p.Rf+(p.dt*p.B1_s.*jsei_avg_tot)*[ones(p.nn,1); zeros(p.np,1)]; 
     else
         Closs = p.Closs_init;
         Rf = p.Rf; 
@@ -1149,7 +1149,7 @@ for i = 1:length(parnames)
     end
 end
 if not(isa(p.De,'function_handle')) p.De = @(T) p.De; end 
-if not(isa(p.i02,'function_handle')) p.i02 = @(T) p.i02; end 
+if not(isa(p.i0sei,'function_handle')) p.i0sei = @(T) p.i0sei; end 
 if not(isa(p.Ds_neg,'function_handle')) p.Ds_neg = @(T) p.Ds_neg; end 
 
 if not(isa(p.dU_dT_neg,'function_handle')) p.dU_dT_neg= @(stoich) p.dU_dT_neg*ones(p.nn,1); end
@@ -1213,7 +1213,7 @@ if p.ageing
     [p.Cbat,sbat] = fcn_Q(Cl_prevt,se_init,0,p);
     p.s0_neg = sbat(3); p.s100_neg = sbat(1);
     p.s0_pos = sbat(4); p.s100_pos = sbat(2);
-    p.i02f = p.i02; 
+    p.i0seif = p.i0sei; 
 end
 
 
@@ -1372,7 +1372,7 @@ p.ageing=0; %toggles ageing. Choose 0 for no ageing
 p.ageingMech.Oxidation = 0;
 p.ageingMech.SEI = 0;
 p.ageingMech.LPL = 0;
-p.LimitedSEI = 0;
+p.ageingMech.LimitedSEI = 0;
 %Specification of simplifications. See Ref 1 for how the simplifications
 %are defined. Note that choosing 0 is not recommended for the 
 %simplifications that can be made on the parameters kappa, De, dlnfdce,
@@ -1479,13 +1479,12 @@ p.hc = 0.8915; %Convective heat transfer coefficient [W/K]
 p.Cp = 500; % Heat capacity [J/kg/K]
 
 %Ageing parameters
-p.i0C = 7e-42;
-p.i02 = 0.016;
+p.i0ox = 7e-42;
+p.i0sei = 0.016;
 p.i0lpl=4e-4;
-p.alpha_c2=0.5;
-p.alphaa_lpl=0.3;
-p.alphac_lpl=0.7;
-p.alpha_a2=0.5;
+p.ac_sei=0.5;
+p.ac_lpl=0.7;
+p.aa_ox=0.5;
 p.B1_l=15;
 p.B2_l=-5;
 p.B1_s=25;
