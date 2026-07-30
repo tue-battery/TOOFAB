@@ -1,4 +1,5 @@
 %% Test setup
+addpath(fullfile(fileparts(mfilename('fullpath')),'..')); %adds the main TOOFAB folder (containing DFN.m) to the path
 load Data.mat
 load DFNparams.mat
 %%
@@ -53,12 +54,12 @@ p.Cbat=Equil2.Cbat;
     p.VOffset=0;
     p.T_amb=273.15+20;
     %Capacity loss outputs can be found in the results Struct
-    results = DFN_Ageing_JPS(@cycle2,2880000,1,p);
+    results = DFN(@cycle2,2880000,1,p);
 
 
 
 %% Cycle Function
-function [i_app_next,mem,end_simulation,dt] = cycle2(k,i_app,V,mem,p)
+function [i_app_next,mem,end_simulation,dt] = cycle2(k,t,i_app,V,soc,cs,ce,phis,phie,mem,p)
 V_max = 4.2;   %Voltage at which the battery switches to CV mode
 V_min = 2.5;   %Voltage after which the battery stops discharging
 i_min = 0.005;  %Current level to terminate the CV mode with

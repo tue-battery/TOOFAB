@@ -512,7 +512,7 @@ if p.ageing
     eta2 = phis-phie_bar;
     if p.ageingMech.SEI && p.ageingMech.LimitedSEI
         Fac=exp(-p.Rf*(p.lamda_sei));
-        jsei = Fac.*(p.i0sei/p.F).*(-(exp(-p.acsei*p.F/(p.R*T)*eta2)));
+        jsei = Fac.*(p.i0sei/p.F).*(-(exp(-p.ac_sei*p.F/(p.R*T)*eta2)));
     elseif p.ageingMech.SEI && ~ p.ageingMech.LimitedSEI
         Fac=zeros(p.np+p.nn,1);
         jsei = (p.i0sei/p.F).*(-(exp(-p.ac_sei*p.F/(p.R*T)*eta2)));
@@ -650,8 +650,8 @@ if p.ageing
     % SEI Formation
     
     if p.ageingMech.LimitedSEI
-        djseidphis = diag(exp(-p.Rf.*p.lamda_sei).*p.i0sei).*(p.ac_sei/(p.R*T).*(exp(-p.ac_sei*p.F/(p.R*T)*eta2)))*deta2dphis; 
-    else 
+        djseidphis = diag(exp(-p.Rf.*p.lamda_sei).*p.i0sei).*(p.ac_sei/(p.R*T).*(exp(-p.ac_sei*p.F/(p.R*T)*eta2)))*deta2dphis;
+    else
         djseidphis = diag(p.i0sei*(p.ac_sei/(p.R*T)*(exp(-p.ac_sei*p.F/(p.R*T)*eta2))))*deta2dphis; 
     end
     djseidphis(p.nn+1:end,:) = zeros(p.np,p.nnp); 
