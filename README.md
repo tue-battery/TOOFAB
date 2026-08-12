@@ -60,8 +60,8 @@ Several example files are included that show how to use the toolbox.
 It could happen that you encounter errors or unexpected behavior under certain circumstances. If you find any problems with the toolbox, please contact me (f.a.l.le.roux@tue.nl). I am open to assist you with the use of the toolbox for your usecase. 
 
 ## Authors
-Zuan Khalik (https://www.tue.nl/en/research/researchers/zuan-khalik/)
-Francis le Roux (https://www.tue.nl/en/research/researchers/francis-le-roux)
+Zuan Khalik (https://www.tue.nl/en/research/researchers/zuan-khalik/)/
+Francis le Roux (https://www.tue.nl/en/research/researchers/francis-le-roux)/
 Elionai Weldeghebreal (https://www.tue.nl/en/research/researchers/elionai-weldeghebreal)
 
 ## References
