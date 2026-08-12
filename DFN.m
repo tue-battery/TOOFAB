@@ -37,7 +37,7 @@
 % This file is a part of the TOOlbox for FAst Battery simulation (TOOFAB)
 % Github: https://github.com/tue-battery/TOOFAB
 %
-% Authors: Francis le Roux (f.a.l.le.roux@tue.nl), Zuan Khalik (z.khalik@tue.nl)
+% Authors: Francis le Roux (f.a.l.le.roux@tue.nl), Zuan Khalik 
 %
 % TOOFAB is licensed under the BSD 3-Clause License
 %

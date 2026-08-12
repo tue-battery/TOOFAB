@@ -1,6 +1,6 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
-% V0.5.3
+% V0.5.4
 %
 % Estimate DFN parameters
 % 
@@ -12,7 +12,8 @@
 %    - data is a cell that can contain multiple structs that in itself contain
 %      the measurement data. In each of the structs, there should be at least 3
 %      fields: t, I, V. t is the time vector, I contains the applied current
-%      measurements and V the terminal voltage measurements. For simplicity, make
+%      measurements and V the terminal voltage measurements. An additional temperature
+%      vector T can be provided to allow for temperature dependencies. For simplicity, make
 %      sure that you interpolate the data such that the sample time is 1 s (see
 %      the example data). 
 %    - in options you can specify additional options for the parameter
@@ -23,9 +24,9 @@
 %    - The estimated parameters are given by p. 
 %
 % This file is a part of the TOOlbox for FAst Battery simulation (TOOFAB)
-% Github: https://github.com/Zuan-Khalik/TOOFAB
+% Github: https://github.com/tue-battery/TOOFAB
 %
-% Author: Zuan Khalik (z.khalik@tue.nl)
+% Author: Francis le Roux (f.a.l.le.roux@tue.nl), Elionai Weldeghebreal (e.weldeghebreal@tue.nl) and Zuan Khalik 
 %
 % TOOFAB is licensed under the BSD 3-Clause License
 %
@@ -38,7 +39,7 @@ if isfield(equil_data,'EMF') && not(isfield(equil_data,'EMF') && isfield(equil_d
 else
     options.equil_mode = 0;
 end
-options.sensitivity_analysis=1;
+options.sensitivity_analysis=0;
 options.parameter_estimation = 1;
 options.sens_perturb = 0.1;
 options.sens_perturb_mode = 1; %-1 for only lower pertubation, 1 for only higher pertubation, and 0 for both
@@ -92,16 +93,16 @@ end
 
 model = @(equil,data,par) dfn_model(data,equil,par,options);
 
-if options.equil_mode
-    par_names = {'s0_neg','s0_pos','s100_neg','s100_pos','Ds_neg', 'Ds_pos', 'De', 'p_neg', 'p_sep', 'p_pos', 't_plus',...
-            'dlnfdce','sigma_neg', 'sigma_pos','kappa', 'Rf_neg', 'R_cc','Ds_neg_Ea','Ds_pos_Ea', 'knEa','kpEa','DEa'...
+    if options.equil_mode
+        par_names = {'s0_neg','s0_pos','s100_neg','s100_pos','Ds_neg', 'Ds_pos', 'De', 'p_neg', 'p_sep', 'p_pos', 't_plus',...
+                'sigma_neg', 'sigma_pos','kappa', 'Rf_neg', 'Ds_neg_Ea','Ds_pos_Ea', 'knEa','kpEa','DEa'...
+                'alpha', 'k0_neg', 'k0_pos', 'epse_neg', 'epse_sep', 'epse_pos',...
+                'dlnfdce','R_cc','hc', 'Cp', 'V_cell'}; 
+    else
+        par_names = {'Ds_neg', 'Ds_pos', 'De','p_neg', 'p_sep', 'p_pos', 't_plus',...
+            'sigma_neg', 'sigma_pos','kappa', 'Rf_neg', 'Ds_neg_Ea','Ds_pos_Ea', 'knEa','kpEa','DEa',...
             'alpha', 'k0_neg', 'k0_pos', 'epse_neg', 'epse_sep', 'epse_pos',...
-            'hc', 'Cp', 'V_cell'}; 
-else
-    par_names = {'Ds_neg', 'Ds_pos', 'De','p_neg', 'p_sep', 'p_pos', 't_plus',...
-        'dlnfdce','sigma_neg', 'sigma_pos','kappa', 'Rf_neg', 'R_cc','Ds_neg_Ea','Ds_pos_Ea', 'knEa','kpEa','DEa',...
-        'alpha', 'k0_neg', 'k0_pos', 'epse_neg', 'epse_sep', 'epse_pos',...
-        'hc', 'Cp', 'V_cell'};
+            'dlnfdce','R_cc','hc', 'Cp', 'V_cell'};
 end
 ranges = determine_parameter_ranges(equil_data.Cbat);
 options.est_par=par_names;
@@ -178,6 +179,10 @@ if options.parameter_estimation
         end
         est_par = {results.sensitivity.ranked_parnames{1:n_estimation}};
         est_methods = results.sensitivity.ranked_methods;
+    elseif options.n_estimation
+        n_estimation = options.n_estimation;
+        est_par = options.est_par(1:n_estimation);
+        est_methods = options.est_methods(1:n_estimation);    
     else
         est_par = options.est_par;
         n_estimation = length(est_par);
@@ -259,7 +264,7 @@ for i = 1:length(f)
 end
 
 p.thermal_dynamics = 0;
-% NB
+
 if length(est_data)>1
     for k = 1:length(est_data)
         y_pred = model(est_data{k},equil,par); %Obtain the model output with the nominal parameters
@@ -551,25 +556,23 @@ p.F = 96487;
 rho = 20; %rho is the capacity per m^2. Taken as a typical value based on Arora et al, 2000 (rho = 23), Ecker et al, 2015 (rho = 15), Sturm et al, 2019 (rho = 26)
 p.A_surf = (Cbat/3600)/rho;
 p.ce0 = 1000;
-p.delta_neg =  8.5e-5;%5e-5;
-p.delta_pos = 9.2e-5;%2*3.64e-5; %6e-5;%3.64e-5;
+p.delta_neg =  8.5e-5;
+p.delta_pos = 9.2e-5;
 p.delta_sep = 2e-5;
-p.L = p.delta_sep+p.delta_neg+p.delta_pos;%2.54e-5;
+p.L = p.delta_sep+p.delta_neg+p.delta_pos;
 p.epss_neg = 0.53;
 p.epss_pos = 0.51;
 p.R_neg = 8.1e-6;
 p.R_pos = 5.8e-6;
 
-%need to edit this part
-% Rest of the parameters can be determined from the grouping
-p.Ds_neg = @(T) (ph.Ds_neg*exp((ph.knEa/(8.3145))*((1/298)-(1/T))))*p.R_neg^2;
-p.Ds_pos = @(T) (ph.Ds_pos*exp((ph.knEa/(8.3145))*((1/298)-(1/T))))*p.R_pos^2;
+
+p.Ds_neg = @(T) (ph.Ds_neg*exp((ph.Ds_neg_Ea/(8.3145))*((1/298)-(1/T))))*p.R_neg^2;
+p.Ds_pos = @(T) (ph.Ds_pos*exp((ph.Ds_pos_Ea/(8.3145))*((1/298)-(1/T))))*p.R_pos^2;
 
 p.t_plus = ph.t_plus;
 p.dlnfdce = ph.dlnfdce;
-% ph.Ea ph.Do
 
-%ph.De = @(T) ph.Do*exp(-ph.Ea/(8.3145*T));
+
 p.De = @(T) (ph.De*exp((ph.DEa/(8.3145))*((1/298)-(1/T))))*(1-p.t_plus)/(p.F*p.A_surf*p.ce0);
 
 p.epse_neg = ph.epse_neg*(1-p.t_plus)/(p.F*p.A_surf*p.delta_neg*p.ce0);
@@ -642,53 +645,151 @@ ph.Cp = p.Cp;
 end
 
 function ph = determine_parameter_ranges(Cbat)
-%% Redefined parameter ranges
-ph.dlnfdce_min = 0;
-ph.dlnfdce_max = 0;
+%% Parameter ranges
+%We first define the parmeters in their ungrouped representation - to allow
+%users to easily compare with the literature. We then convert the parameter
+%ranges to the grouped parameter
+% Original parameter ranges
+p.dlnfdce_min = 0;
+p.dlnfdce_max = 0;
 
-ph.s0_neg_min = 0.002;
-ph.s0_neg_max = 0.04;
-ph.s0_pos_min = 0.86;
-ph.s0_pos_max = 0.97;
+p.s0_neg_min = 0.002;
+p.s0_neg_max = 0.13;
+p.s0_pos_min = 0.75;
+p.s0_pos_max = 0.97;
 
-ph.s100_neg_min = 0.75;
-ph.s100_neg_max = 0.89;
-ph.s100_pos_min = 0.22;
-ph.s100_pos_max = 0.44;
+p.s100_neg_min = 0.5;
+p.s100_neg_max = 0.89;
 
-ph.Ds_neg_min = 0.00013;
-ph.Ds_neg_max = 0.00016;
-ph.Ds_pos_min = 0.0004;
-ph.Ds_pos_max = 0.63; %2;
-ph.Ds_neg_Ea_min=1000;
-ph.Ds_neg_Ea_max=100000;
-ph.Ds_pos_Ea_min=1000;
-ph.Ds_pos_Ea_max=100000;
+p.s100_pos_min = 0.1;
+p.s100_pos_max = 0.5;
 
-%ph.De_min  = 3.8e-7*Cbat; %0.01*p.A_surf;
-%ph.De_max  = 7.6e-6*Cbat;
+p.Ds_neg_min = 2e-18; 
+p.Ds_neg_max = 1e-6;
 
-%Adding in ranges for De and Ea
-ph.DEa_min=1000;
-ph.DEa_max=100000;
+p.Ds_pos_min = 4.123e-16;
+p.Ds_pos_max = 1e-9;
 
-ph.De_min=3.8e-7*Cbat;
-ph.De_max=7.6e-6*Cbat;
 
-ph.p_neg_min = 50;
-ph.p_neg_max = 5700;
-ph.p_sep_min = 3700;
-ph.p_sep_max = 31000;
-ph.p_pos_min = 58;
-ph.p_pos_max = 4100; %7500; %4600;
+p.Ds_neg_Ea_min=1000;
+p.Ds_neg_Ea_max=100000;
+p.Ds_pos_Ea_min=1000;
+p.Ds_pos_Ea_max=100000;
 
-ph.t_plus_min = 0.26;
-ph.t_plus_max = 0.38;
+p.DEa_min=1000;
+p.DEa_max=100000;
 
-ph.sigma_neg_min = 1.2*Cbat;
-ph.sigma_neg_max =170*Cbat;
-ph.sigma_pos_min = 0.011*Cbat; %(1/100)*1000*p.A_surf; %altered
-ph.sigma_pos_max = 8.3*Cbat;
+p.De_min=1e-11;%
+p.De_max=3.7e-10;%
+
+p.epse_neg_min = 0.0043;
+p.epse_neg_max = 0.42;
+
+p.epse_sep_min = 0.0740;
+p.epse_sep_max = 1;
+
+p.epse_pos_min = 0.0053;
+p.epse_pos_max = 0.48;
+
+p.t_plus_min = 0.26;
+p.t_plus_max = 0.4;
+
+
+p.sigma_neg_min = 3;
+p.sigma_neg_max = 1e5;
+
+p.sigma_pos_min = 0.00352;
+p.sigma_pos_max = 72.5;
+
+p.epss_neg_min = 0.471;
+p.epss_neg_max = 0.650;
+
+p.epss_pos_min = 0.35;
+p.epss_pos_max = 0.5;
+
+p.kappa_min = 7e-6*Cbat;%
+p.kappa_max = 2e-5*Cbat;%
+
+p.Rf_neg_min = 20/Cbat;%
+p.Rf_neg_max = 330/Cbat;%
+
+p.R_cc_min = 2e-4;
+p.R_cc_max = 2e-2;
+
+p.alpa_min = 0.3;
+p.alpa_max = 0.7;
+
+p.knEa_min=1000;
+p.knEa_max=100000;
+p.kpEa_min=1000;
+p.kpEa_max=100000;
+p.k0_neg_min = 1.38e-7;
+p.k0_neg_max = 1.38e-3;
+p.k0_pos_min = 0.64e-7;
+p.k0_pos_max = 0.64e-4;
+
+p.hc_min = 1e-3;
+p.hc_max = 100;
+p.Cp_min = 1;
+p.Cp_max = 5000;
+p.V_cell_min = 1e-3;
+p.V_cell_max = 1;
+
+p.F = 96487;
+% Free choice parameters
+rho = 20; %rho is the capacity per m^2. Taken as a typical value based on Arora et al, 2000 (rho = 23), Ecker et al, 2015 (rho = 15), Sturm et al, 2019 (rho = 26)
+p.A_surf = (Cbat/3600)/rho;
+p.ce0 = 1000;
+p.delta_neg =  8.5e-5;
+p.delta_pos = 9.2e-5;
+p.delta_sep = 2e-5;
+p.L = p.delta_sep+p.delta_neg+p.delta_pos;
+p.R_neg = 8.1e-6;
+p.R_pos = 5.8e-6;
+
+% Grouped parameter ranges
+ph.dlnfdce_min = p.dlnfdce_min;
+ph.dlnfdce_max = p.dlnfdce_max;
+
+ph.s0_neg_min = p.s0_neg_min;
+ph.s0_neg_max = p.s0_neg_max;
+ph.s0_pos_min = p.s0_pos_min;
+ph.s0_pos_max = p.s0_pos_max;
+
+ph.s100_neg_min = p.s100_neg_min;
+ph.s100_neg_max = p.s100_neg_max;
+ph.s100_pos_min = p.s100_pos_min;
+ph.s100_pos_max = p.s100_pos_max;
+
+ph.Ds_neg_min = p.Ds_neg_min/p.R_neg^2;
+ph.Ds_neg_max = p.Ds_neg_max/p.R_neg^2;
+ph.Ds_pos_min = p.Ds_pos_min/p.R_pos^2;
+ph.Ds_pos_max = p.Ds_pos_max/p.R_pos^2;
+ph.Ds_neg_Ea_min = p.Ds_neg_Ea_min;
+ph.Ds_neg_Ea_max = p.Ds_neg_Ea_max;
+ph.Ds_pos_Ea_min = p.Ds_pos_Ea_min;
+ph.Ds_pos_Ea_max = p.Ds_pos_Ea_max;
+
+ph.DEa_min = p.DEa_min;
+ph.DEa_max = p.DEa_max;
+
+ph.De_min = 2.9e-7*Cbat;
+ph.De_max = 7.9e-6*Cbat;
+
+ph.p_neg_min = p.epse_neg_min/p.delta_neg;
+ph.p_neg_max = p.epse_neg_max/p.delta_neg;
+ph.p_sep_min = p.epse_sep_min/p.delta_sep;
+ph.p_sep_max = p.epse_sep_max/p.delta_sep;
+ph.p_pos_min = p.epse_pos_min/p.delta_pos;
+ph.p_pos_max = p.epse_pos_max/p.delta_pos;
+
+ph.t_plus_min = p.t_plus_min;
+ph.t_plus_max = p.t_plus_max;
+
+ph.sigma_neg_min = p.sigma_neg_min*p.epss_neg_min*p.A_surf/p.delta_neg;
+ph.sigma_neg_max = p.sigma_neg_max*p.epss_neg_max*p.A_surf/p.delta_neg;
+ph.sigma_pos_min = p.sigma_pos_min*p.epss_pos_min*p.A_surf/p.delta_pos;
+ph.sigma_pos_max = p.sigma_pos_max*p.epss_pos_max*p.A_surf/p.delta_pos;
 
 ph.kappa_min = 7e-6*Cbat;
 ph.kappa_max = 2e-5*Cbat;
@@ -696,34 +797,35 @@ ph.kappa_max = 2e-5*Cbat;
 ph.Rf_neg_min = 20/Cbat;
 ph.Rf_neg_max = 330/Cbat;
 
-ph.R_cc_min = 32/Cbat;
-ph.R_cc_max = 170/Cbat;
+ph.R_cc_min = p.R_cc_min/p.A_surf;
+ph.R_cc_max = p.R_cc_max/p.A_surf;
 
-ph.alpha_min = 0.48;
-ph.alpha_max = 0.52 ;
+ph.alpha_min = p.alpa_min;
+ph.alpha_max = p.alpa_max;
 
-ph.knEa_min=1000;
-ph.knEa_max=100000;
-ph.kpEa_min=1000;
-ph.kpEa_max=100000;
-ph.k0_neg_min = 5.7e-5;
-ph.k0_neg_max = 0.00078; %3*0.0005; %altered
-ph.k0_pos_min = 7.9e-5;
-ph.k0_pos_max = 0.001;
+ph.knEa_min = p.knEa_min;
+ph.knEa_max = p.knEa_max;
+ph.kpEa_min = p.kpEa_min;
+ph.kpEa_max = p.kpEa_max;
 
-ph.epse_neg_min = 0.017*Cbat;
-ph.epse_neg_max = 0.076*Cbat; % 6*6800*p.A_surf; %altered
-ph.epse_sep_min = 0.0049*Cbat;
-ph.epse_sep_max = 0.083*Cbat;
-ph.epse_pos_min = 0.01*Cbat;
-ph.epse_pos_max = 0.14*Cbat;
+ph.k0_neg_min = p.k0_neg_min*p.ce0/(p.R_neg*p.F);
+ph.k0_neg_max = p.k0_neg_max*p.ce0/(p.R_neg*p.F);
+ph.k0_pos_min = p.k0_pos_min*p.ce0/(p.R_neg*p.F);
+ph.k0_pos_max = p.k0_pos_max*p.ce0/(p.R_neg*p.F);
 
-ph.hc_min = 1e-3;
-ph.hc_max = 100;
-ph.Cp_min = 1;
-ph.Cp_max = 5000;
-ph.V_cell_min = 1e-3;
-ph.V_cell_max = 1;
+ph.epse_neg_min = p.epse_neg_min*p.F*p.A_surf*p.delta_neg*p.ce0/(1-p.t_plus_min);
+ph.epse_neg_max = p.epse_neg_max*p.F*p.A_surf*p.delta_neg*p.ce0/(1-p.t_plus_max);
+ph.epse_sep_min = p.epse_sep_min*p.F*p.A_surf*p.delta_sep*p.ce0/(1-p.t_plus_min);
+ph.epse_sep_max = p.epse_sep_max*p.F*p.A_surf*p.delta_sep*p.ce0/(1-p.t_plus_max);
+ph.epse_pos_min = p.epse_pos_min*p.F*p.A_surf*p.delta_pos*p.ce0/(1-p.t_plus_min);
+ph.epse_pos_max = p.epse_pos_max*p.F*p.A_surf*p.delta_pos*p.ce0/(1-p.t_plus_max);
+
+ph.hc_min = p.hc_min;
+ph.hc_max = p.hc_max;
+ph.Cp_min = p.Cp_min;
+ph.Cp_max = p.Cp_max;
+ph.V_cell_min = p.V_cell_min;
+ph.V_cell_max = p.V_cell_max;
 end
 
 function dispstat(TXT,varargin)
