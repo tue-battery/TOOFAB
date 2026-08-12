@@ -1,5 +1,5 @@
 # TOOFAB(ulous) (Toolbox for FAst Battery simulation)
-Version 1.5.4 (issued 27-05-2026)
+Version 1.5.5 (issued 12-08-2026)
 
 A fast implementation of the Doyle-Fuller-Newman (DFN) battery model usable for analysis and control. 
 
@@ -13,7 +13,7 @@ Physics-based ageing modeling
 - Accurate and computationally efficient simulation of the DFN model describing the internal electrochemical processes of a battery. 
 - Ability to easily use and change concentration-dependent parameters.
 - Ability to easily configure the toolbox for a desired trade-off between accuracy and computational efficiency through selection of model simplifications and adjusting the coarseness of the discretization grid. 
-- Option to use a battery ageing model describing the side reactions that lead to Li-ion loss due to the a variety of agein phenomena. The user can find this in the Cycle_Ageing folder.
+- Option to use a battery ageing model describing the side reactions that lead to Li-ion loss due to the a variety of ageing phenomena. The user can find this in the Cycle_Ageing folder.
 - Option to use a lumped thermal model describing the thermal dynamics.  
 - Ability to efficiently use the model in a closed-loop setting. 
 - Estimate DFN model parameters based on experimental current/voltage data.
@@ -62,6 +62,8 @@ It could happen that you encounter errors or unexpected behavior under certain c
 ## Authors
 Zuan Khalik (https://www.tue.nl/en/research/researchers/zuan-khalik/)
 Francis le Roux (https://www.tue.nl/en/research/researchers/francis-le-roux)
+Elionai Weldeghebreal (https://www.tue.nl/en/research/researchers/elionai-weldeghebreal)
+
 ## References
 [1] Z. Khalik, M.C.F. Donkers, H.J. Bergveld, "Model Simplifications and Their Impact on Computational Complexity for an Electrochemistry-Based Battery Modeling Toolbox", in Journal of Power Sources, 2021
 
