@@ -17,10 +17,13 @@ Physics-based ageing modeling
 - Option to use a lumped thermal model describing the thermal dynamics.  
 - Ability to efficiently use the model in a closed-loop setting. 
 - Estimate DFN model parameters based on experimental current/voltage data.
+- Step-by-step Basic DFN Model MATLAB livescript
+- Step-by-step Parameter Estimation livescript
 
 ### Coming features
 - Improved ageing modeling implementations
 - Parameter Estimation for ageing
+- Step-by-step Ageing modeling livescript
 
 ## Getting Started
 These instructions will set you up to use TOOFAB.
