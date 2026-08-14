@@ -78,6 +78,8 @@ Elionai Weldeghebreal (https://www.tue.nl/en/research/researchers/elionai-weldeg
 
 [4] F. le Roux, T. Donkers, H.J. Bergveld, "Lithium-ion battery ageing modeling: Towards physically consistent implementations of SEI growth, Lithium plating, and Cathode oxidation", in Journal of Power Sources, 2026
 
+[5] Diaz Aguilar, A. M., Lodge, A. A., & Hoekstra, F. S. J. (2025). Unlocking electrochemical battery modelling: An open-source suite comparison methodology. IFAC-PapersOnLine, 59(5), 169–174. 
+
 ## License
 
 This project is licensed under the BSD 3-Clause License - see the [LICENSE.md](LICENSE.md) file for details
