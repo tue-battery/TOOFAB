@@ -13,9 +13,21 @@
 %      the measurement data. In each of the structs, there should be at least 3
 %      fields: t, I, V. t is the time vector, I contains the applied current
 %      measurements and V the terminal voltage measurements. An additional temperature
-%      vector T can be provided to allow for temperature dependencies. For simplicity, make
+%      vector T [K] can be provided to allow for temperature dependencies. For simplicity, make
 %      sure that you interpolate the data such that the sample time is 1 s (see
-%      the example data). 
+%      the example data). An ambient temperature T_amb [K] can optionally be
+%      provided per dataset. If it is not provided, options.dfn.T_amb is used.
+%      Temperature options (see the example ParamEst_Temperature_Example):
+%        - If T is provided and options.T_objective = 0, T is used as the
+%          model temperature (thermal model off).
+%        - If options.T_objective = 1, the thermal model is activated and the
+%          temperature is part of the objective. If options.V_objective = 1 as
+%          well, the temperature residual is weighted by options.T_weight
+%          (default 0.1). T is then used as the initial temperature.
+%        - options.input_ph can be used to start the estimation from an
+%          earlier estimated parameter set (the grouped parameters, i.e.,
+%          the output ph), whereas options.input_par takes a full DFN
+%          parameter set with numeric parameter values.
 %    - in options you can specify additional options for the parameter
 %      estimation routine. In principle, you shouldn't need this field other than
 %      specifying the ambient temperature. 
@@ -54,6 +66,7 @@ options.n_estimation = 0;
 options.use_input_par_as_init = 1;
 options.V_objective = 1;
 options.T_objective = 0;
+options.T_weight = 0.1; %weight of the temperature residual (K) relative to the voltage residual (V) when both are in the objective (V_objective and T_objective). Temperature errors are typically an order of magnitude larger than voltage errors, so 0.1 keeps the temperature only slightly more important.
 options.range_scaling = 0;
 options.opt_tolX = 1e-4;
 
@@ -84,7 +97,11 @@ if options.T_objective
     options.dfn.thermal_dynamics = 1;
 end
 
-if isfield(options,'input_par')
+if isfield(options,'input_ph')
+    %Start from an earlier estimated parameter set in the grouped form
+    %(the second output ph), e.g., to continue with another objective.
+    options.input_par = options.input_ph;
+elseif isfield(options,'input_par')
     par_or = options.input_par;
     out = DFN(-1,10,0.2,par_or);
     par_com = out.param;
@@ -263,8 +280,6 @@ for i = 1:length(f)
     p.(f{i}) = options.dfn.(f{i});
 end
 
-p.thermal_dynamics = 0;
-
 if length(est_data)>1
     for k = 1:length(est_data)
         y_pred = model(est_data{k},equil,par); %Obtain the model output with the nominal parameters
@@ -277,7 +292,7 @@ if length(est_data)>1
             end
         end
         y_exp2 = y_exp(est_data{k});
-        Fout{k} = 10*(y_pred-y_exp2);
+        Fout{k} = 10*objective_weights(options,length(y_exp2)).*(y_pred-y_exp2);
     end
     F = Fout{1};
     for k = 2:length(est_data)
@@ -295,7 +310,7 @@ else
             end
     end
     y_exp2 = y_exp(est_data);
-    Fout = 10*(y_pred-y_exp2);
+    Fout = 10*objective_weights(options,length(y_exp2)).*(y_pred-y_exp2);
     F = Fout;
 end
 
@@ -303,6 +318,16 @@ if any(isnan(F))
     temp = 1;
 end
 
+end
+
+function w = objective_weights(options,n)
+%Weights of the residual vector of length n. When both the voltage and the
+%temperature are in the objective, the residual is [V T], and the second half
+%(temperature) is weighted by options.T_weight.
+w = ones(1,n);
+if options.V_objective && options.T_objective
+    w(n/2+1:end) = options.T_weight;
+end
 end
 
 function par = beta2par(beta,par_names,ranges,method)
@@ -516,13 +541,25 @@ for i = 1:length(f)
     p.(f{i}) = options.dfn.(f{i});
 end
 
-p.thermal_dynamics = 0;
+%The thermal model is required to predict temperature, so it is always
+%activated for the temperature objective (V and T, or T only). Otherwise
+%the setting in options.dfn.thermal_dynamics is used.
+if options.T_objective
+    p.thermal_dynamics = 1;
+end
+
+%The ambient temperature is set per dataset only if the dataset provides it
+%(data.T_amb). Otherwise, the default or the value specified by the user in
+%options.dfn.T_amb is used.
+if isfield(data,'T_amb')
+    p.T_amb = data.T_amb;
+end
 
 % need to edit the dfn model accordingly
 if isfield(options,'Caged')
     p.ageing = 1;
     if isfield(data,'T')
-        out = DFN([data.t' data.I'],data.t(end),[data.V(1), options.Caged],p,data.T);
+        out = DFN([data.t' data.I' data.T'],data.t(end),[data.V(1), options.Caged],p);
     else
         out = DFN([data.t' data.I'],data.t(end),[data.V(1), options.Caged],p);
     end
@@ -537,6 +574,14 @@ end
 
 V = interp1(out.t,out.V,data.t);
 T = interp1(out.t,out.T,data.t);
+
+%If the model time step is larger than the sample time of the data, the
+%first samples of the data lie before the first model output. These are
+%set to the first model output, instead of NaN (which is penalised as a
+%failed simulation). A simulation that stops early is still penalised.
+iFront = data.t < out.t(1);
+V(iFront) = out.V(1);
+T(iFront) = out.T(1);
 
 if options.V_objective && not(options.T_objective)
     y = V;
