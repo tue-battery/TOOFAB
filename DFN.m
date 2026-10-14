@@ -91,6 +91,12 @@ m.dummy = 0;
 m = fcn_system_matrices(ones(p.nn,1),p,m,p.T_amb);
 
 [cs_prevt, ce_prevt, phis_prev,T_prevt,Cl_prevt,Rf] = init(p,m,init_cond);
+%If a temperature profile is provided as the third column of the input, the
+%initial temperature is taken from it (with or without thermal dynamics),
+%unless a struct init_cond specifies the initial states, including T.
+if exist('F_temperature','var')==1 && not(isstruct(init_cond))
+    T_prevt = F_temperature(0);
+end
 max_prealloc_size = 2e8;
 phis = zeros(p.nnp,min(max_prealloc_size,round(time_max/p.dt)));
 phie = zeros(p.nx,min(max_prealloc_size,round(time_max/p.dt)));
@@ -215,18 +221,39 @@ while not(end_simulation)
         i_app(t+1) = input;
     end
     if input_mode==1
-        i_app(t+1) = F_current(t_vec(t+1));  
+        i_app(t+1) = F_current(t_vec(t+1));
     end
+
+    %Temperature used in the solve of this step (T_step):
+    % - thermal dynamics: the temperature at the end of the previous step
+    % - temperature profile (third column of input): profile value at t+1
+    % - temperature set by the input function (mem.T_amb): that value
+    % - otherwise: the constant ambient temperature p.T_amb
+    if p.thermal_dynamics
+        T_step = T_prevt;
+    elseif exist('F_temperature','var')==1
+        T_step = F_temperature(t_vec(t+1));
+    elseif input_mode==2 && isfield(mem,'T_amb')
+        T_step = mem.T_amb;
+    else
+        T_step = p.T_amb;
+    end
+    %Temperature dependent kinetic parameters follow T_step in all modes
+    p.k0 = p.k0f(T_step);
+    if p.ageing
+        p.i0sei = p.i0seif(T_step);
+    end
+
     if(not(isequal(dt_prev,p.dt)))
-        m = fcn_system_matrices(cs_prevt,p,m,T_prevt);
+        m = fcn_system_matrices(cs_prevt,p,m,T_step);
     end
-    
-    m = fcn_system_matrices2(p,m,cs_prevt,ce_prevt,T_prevt); 
+
+    m = fcn_system_matrices2(p,m,cs_prevt,ce_prevt,T_step);
     
     % Solve set of AEs using Newton's method at time t
     for k=1:p.iter_max
         % Obtain function matrix and Jacobian       
-        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),jsei(:,t+1),jlpl(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),j_ox(:,t+1),U(:,t+1),p,m,Fac(:,t+1),CeRat(:,t+1),j1_curr] = fcn_F(phis_prev,ce_prevt,cs_prevt,FacT(:,t),T_prevt,i_app(t+1),p,m);
+        [F_phis,cs(:,t+1),ce(:,t+1),phie(:,t+1),jn(:,t+1),jsei(:,t+1),jlpl(:,t+1),i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),j_ox(:,t+1),U(:,t+1),p,m,Fac(:,t+1),CeRat(:,t+1),j1_curr] = fcn_F(phis_prev,ce_prevt,cs_prevt,FacT(:,t),T_step,i_app(t+1),p,m);
         conv_check = norm(F_phis,2); 
         num_iter = num_iter+1; 
        % If algorithm doesn't converge, then display a warning
@@ -247,7 +274,7 @@ while not(end_simulation)
             kl = 1;
             break
         end
-        [J_phis,p] = fcn_J(cs(:,t+1),ce(:,t+1),FacT(:,t),CeRat(:,t),jn(:,t+1),j1_curr,i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),T_prevt,p,m);
+        [J_phis,p] = fcn_J(cs(:,t+1),ce(:,t+1),FacT(:,t),CeRat(:,t),jn(:,t+1),j1_curr,i0(:,t+1),eta(:,t+1),eta2(:,t+1),eta_ox(:,t+1),T_step,p,m);
         
         if t==1
             phis_prev = real(phis_prev-(J_phis\F_phis)); 
@@ -283,9 +310,14 @@ while not(end_simulation)
         % BO = -0.001;
         epss_pos_temp(:,t+1) = epss_pos_temp(:,t) + p.dt*p.BO*j_ox(p.nn+1:end,t+1);
         Closs_ox(t+1) = Closs_ox(t) + p.F*p.dt*p.dx_p*p.A_surf*(sum(abs(j_ox(1+p.nn:end,t+1).*p.a_s(1+p.nn:end))));
-        Cl(t+1) = Closs_SEI(t+1)+ Closs_LPL(t+1) +Closs_ox(t+1);   
+        Cl(t+1) = Closs_SEI(t+1)+ Closs_LPL(t+1) +Closs_ox(t+1);
+    else
+        %FacT is read at every step, so it must also grow without ageing (the
+        %number of steps can exceed round(time_max/dt), e.g., if dt does not
+        %divide the final time).
+        FacT(:,t+1) = FacT(:,t);
     end
-    
+
     if mod(t,500)==0 && p.ageing==1
         [Cbat_new,sbat] = fcn_Q(Cl(t+1),se_init,1,p); 
         p.s0_neg = sbat(3); p.s100_neg = sbat(1);
@@ -317,15 +349,9 @@ while not(end_simulation)
     end
     
     if p.thermal_dynamics
-        T(t+1) = fcn_T(jn(:,t+1), U(:,t+1),stoich,V(t+1),i_app(t+1),T_prevt, p);
-    elseif exist('F_temperature','var')==1
-        T(t+1) = F_temperature(t_vec(t+1));
+        T(t+1) = fcn_T(jn(:,t+1), U(:,t+1),stoich,V(t+1),i_app(t+1),T_step, p);
     else
-        if input_mode==2 && isfield(mem,'T_amb') 
-            T(t+1)=mem.T_amb;
-        else
-            T(t+1) = p.T_amb; 
-        end
+        T(t+1) = T_step;
     end
     solution_time = solution_time+toc();
     if (any(stoich>=1-1e-6) || any(stoich<=1e-6)) && not(max_iterations)
@@ -370,13 +396,9 @@ while not(end_simulation)
         T_prevt = T(t+1); 
         soc_prevt = soc(t+1); 
         if p.ageing
-            Cl_prevt = Cl(t+1); 
-            p.i0sei = p.i0seif(T_prevt); 
-            Rf_prevt = Rf(:,t+1); 
+            Cl_prevt = Cl(t+1);
+            Rf_prevt = Rf(:,t+1);
             p.Rf = Rf_prevt;
-        end
-        if p.thermal_dynamics
-            p.k0 = p.k0f(T_prevt);
         end
         t = t+1;
     end
@@ -584,10 +606,10 @@ if p.set_simp(4)==0
 end
 
 if p.set_simp(1)==0
-    m = kappa_matrices(ce,p.T_amb,p,m); 
-    m = nu_matrices(ce,p.T_amb,p,m); 
+    m = kappa_matrices(ce,T,p,m);
+    m = nu_matrices(ce,T,p,m);
 elseif p.set_simp(3)==0
-    m = nu_matrices(ce,p.T_amb,p,m);
+    m = nu_matrices(ce,T,p,m);
 end
 
 i0 = p.k0.*ce_bar.^p.alpha_a.*(p.cs_bar_max-cs_bar).^p.alpha_a.*cs_bar.^p.alpha_c; 
@@ -715,7 +737,7 @@ function [T] = fcn_T(jn, U,stoich,V,i_app,T_prevt, p)
 qconvec = p.hc*(p.T_amb-T_prevt); 
 DeltaT = U-T_prevt*[p.dU_dT_neg(stoich(1:p.nn)); p.dU_dT_pos(stoich(p.nn+1:end))] ; 
 qchem = i_app*V-p.A_surf*p.F*ones(1,p.nnp)*(p.dx(p.elec_range).*p.a_s.*jn.*DeltaT);  %Resistive and reversible heat generation, only heat mixing due to nonuniform current distribution is accounted for
-T = T_prevt+p.dt*(1/p.Cp*p.m)*(qconvec+qchem); 
+T = T_prevt+p.dt/(p.Cp*p.m)*(qconvec+qchem); %energy balance: m*Cp*dT/dt = heat flow [W]
 end
 
 function [ cs, ce, phis,T,Closs,Rf] = init(p,m,init_cond)
@@ -909,7 +931,8 @@ else
     Acs_n = sparse(kron(eye(p.nn),Acs_jn)*diag((1/p.dr_n^2)*p.Ds_neg*ones(p.nn,1)'*kron(eye(p.nn), ones(1,p.nrn))));
 end
 m.Acs_hat_n = p.dt*Acs_n-speye(p.nrn*p.nn);
-m.Acs_hat_inv_n = inv(m.Acs_hat_n); 
+m.Acs_hat_inv_n = inv(m.Acs_hat_n);
+m.Dsn_T = NaN; %temperature at which the negative electrode Ds block was last built in Ds_matrices (NaN: not built yet)
 
 Bcs_jn = -2*(p.dr_n+p.R_neg)/(p.dr_n*p.R_neg)*[zeros(p.nrn-1,1); 1];
 Bcs_jp = -2*(p.dr_p+p.R_pos)/(p.dr_p*p.R_pos)*[zeros(p.nrp-1,1); 1];
@@ -947,17 +970,27 @@ m.Aphie_bar = m.Ace_bar;
 
 m.Bphis_inv = inv(Bphis); 
 
-if p.set_simp(2)==2 || p.set_simp(2)==0
-    m = De_matrices(p.ce0,T,p,m); 
+%Parameters with simplification 2 are static and are evaluated at T_amb,
+%independent of the temperature at which the matrices are (re)built.
+%Simplification 0 is re-evaluated at the current temperature in fcn_F.
+if p.set_simp(2)==2
+    m = De_matrices(p.ce0,p.T_amb,p,m);
+elseif p.set_simp(2)==0
+    m = De_matrices(p.ce0,T,p,m);
 end
 
-if p.set_simp(4)==2 || p.set_simp(4)== 0
-    m = Ds_matrices(ones(p.nn,1),ones(p.np,1),T,p,m); 
+if p.set_simp(4)==2
+    m = Ds_matrices(ones(p.nn,1),ones(p.np,1),p.T_amb,p,m);
+elseif p.set_simp(4)==0
+    m = Ds_matrices(ones(p.nn,1),ones(p.np,1),T,p,m);
 end
 
-if p.set_simp(1)==2 || p.set_simp(1) == 0 
-    m = kappa_matrices(p.ce0,T,p,m); 
-    m = nu_matrices(p.ce0,T,p,m); 
+if p.set_simp(1)==2
+    m = kappa_matrices(p.ce0,p.T_amb,p,m);
+    m = nu_matrices(p.ce0,p.T_amb,p,m);
+elseif p.set_simp(1)==0
+    m = kappa_matrices(p.ce0,T,p,m);
+    m = nu_matrices(p.ce0,T,p,m);
 end
 end
 
@@ -969,7 +1002,7 @@ end
 
 if p.set_simp(4)==1
     cs_bar = m.Acs_bar*cs_prevt; 
-    m = Ds_matrices(cs_bar(1:p.nn)/p.cs_max_neg,cs_bar(p.nn+1:end)/p.cs_max_pos,p.T_amb,p,m);
+    m = Ds_matrices(cs_bar(1:p.nn)/p.cs_max_neg,cs_bar(p.nn+1:end)/p.cs_max_pos,T,p,m);
 end
 
 
@@ -1018,6 +1051,20 @@ function m = Ds_matrices(stoichn,stoichp,T,p,m)
         end
         m.Bcs_hat = [-diag(3*p.dt./p.Rs); diag(p.Rs./(5*p.Ds))]; 
     else
+        %The negative electrode block is built in fcn_system_matrices at T_amb.
+        %Unless Ds is static (simplification 2), rebuild it when the temperature
+        %(or stoichiometry dependence) requires it.
+        if p.set_simp(4)~=2 && (isnan(m.Dsn_T) || m.Dsn_T~=T || nargin(p.Ds_neg)>1)
+            Acs_jn = sparse(fcn_Acs_j(p.nrn));
+            if nargin(p.Ds_neg)>1
+                Ds_n = p.Ds_neg(stoichn,T);
+            else
+                Ds_n = p.Ds_neg(T);
+            end
+            Acs_n = kron(speye(p.nn),Acs_jn)*diag(((1/p.dr_n^2)*(ones(p.nn,1).*Ds_n)'*kron(speye(p.nn), ones(1,p.nrn))));
+            m.Acs_hat_inv_n = inv(p.dt*Acs_n-speye(p.nrn*p.nn));
+            m.Dsn_T = T;
+        end
         if nargin(p.Ds_pos)>1
             Acs_p = kron(speye(p.np),m.Acs_jp)*diag(((1/p.dr_p^2)*(ones(p.np,1).*p.Ds_pos(stoichp,T))'*kron(speye(p.np), ones(1,p.nrp))));
         else
@@ -1152,6 +1199,15 @@ if not(isa(p.De,'function_handle')) p.De = @(T) p.De; end
 if not(isa(p.i0sei,'function_handle')) p.i0sei = @(T) p.i0sei; end 
 if not(isa(p.Ds_neg,'function_handle')) p.Ds_neg = @(T) p.Ds_neg; end 
 
+%Default entropy change: normalised with the stoichiometry window of this cell
+if ischar(p.dU_dT_neg) || isstring(p.dU_dT_neg)
+    s0n = p.s0_neg; s100n = p.s100_neg;
+    p.dU_dT_neg = @(x) 0.00192209526443574*((x-s0n)/(s100n-s0n)).^4 + -0.00470201188333028*((x-s0n)/(s100n-s0n)).^3 + 0.00456069824513835*((x-s0n)/(s100n-s0n)).^2 + -0.00209506053870547*((x-s0n)/(s100n-s0n)) + 0.000210893728587236;
+end
+if ischar(p.dU_dT_pos) || isstring(p.dU_dT_pos)
+    s0p = p.s0_pos; s100p = p.s100_pos;
+    p.dU_dT_pos = @(x) -0.000272434021901448*exp(0.893333198729898*((x-s100p)/(s0p-s100p))) + 0.000623443244648843*exp(-9.43437509677502*((x-s100p)/(s0p-s100p)));
+end
 if not(isa(p.dU_dT_neg,'function_handle')) p.dU_dT_neg= @(stoich) p.dU_dT_neg*ones(p.nn,1); end
 if not(isa(p.dU_dT_pos,'function_handle')) p.dU_dT_pos= @(stoich) p.dU_dT_pos*ones(p.np,1); end
 
@@ -1358,7 +1414,7 @@ p.set_grid = [p.grid.nn p.grid.ns p.grid.np p.grid.nrn p.grid.nrp]; %compact spe
  
 p.tol = 1e-3; %Tolerance for convergence                                                                     
 p.iter_max = 1e2; %Maximum iterations for the Newton's algorithm for solving the algebraic equations
-p.Vmin = 2.5; p.Vmax = 6; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
+p.Vmin = 2.4; p.Vmax = 6; %minimum and maximum allowable voltages. If these bounds are exceeded, the simulation stops
 p.verbose = 2; %verbosity of the toolbox. Allowable settings: 0. no verbosity, 1. only indicate starting and ending of simulation with computation time, 2. in addition to 1, also show current and voltage while simulating
 
 p.current_interp = 'linear'; %Interpolation method if input is given as an array. Choose any of the methods specified in the documenation of the MATLAB griddedInterpolant function
@@ -1471,8 +1527,12 @@ p.U_neg = @(theta_n) 0.7222 + 0.1387*theta_n + 0.029*theta_n.^0.5 - 0.0172./thet
 %input stoichiometry
 s0_neg = p.s0_neg; s100_neg = p.s100_neg; 
 s0_pos = p.s0_pos; s100_pos = p.s100_pos; 
-p.dU_dT_neg = @(x) 0.00192209526443574*((x-s0_neg)/(s100_neg-s0_neg)).^4 + -0.00470201188333028*((x-s0_neg)/(s100_neg-s0_neg)).^3 + 0.00456069824513835*((x-s0_neg)/(s100_neg-s0_neg)).^2 + -0.00209506053870547*((x-s0_neg)/(s100_neg-s0_neg)) + 0.000210893728587236; 
-p.dU_dT_pos = @(x) -0.000272434021901448*exp(0.893333198729898*((x-s100_pos)/(s0_pos-s100_pos))) + 0.000623443244648843*exp(-9.43437509677502*((x-s100_pos)/(s0_pos-s100_pos))); 
+%'default': a function of the stoichiometry normalised by the stoichiometry
+%window (s0 to s100) of the simulated cell. This is resolved in
+%fcn_system_vectors, such that it follows the stoichiometries that you specify
+%(or estimate) for the cell.
+p.dU_dT_neg = 'default';
+p.dU_dT_pos = 'default';
 
 p.m = 0.45; %mass of the cell [kg]
 p.hc = 0.8915; %Convective heat transfer coefficient [W/K]
