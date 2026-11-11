@@ -56,10 +56,9 @@ options.parameter_estimation = 1;
 options.sens_perturb = 0.1;
 options.sens_perturb_mode = 1; %-1 for only lower pertubation, 1 for only higher pertubation, and 0 for both
 options.plot_sensitivity = 1;
-options.par_names_plot = {'$s_{0,n}$', '$s_{0,p}$','$s_{100,n}$', '$s_{100,p}$','$\hat{D}_{s,n}$', '$\hat{D}_{s,p}$', '$\hat{D}_e$', '$\hat{p}_n$', '$\hat{p}_{sep}$', '$\hat{p}_p$', '$t_+^0$',...
-    '$dlnfdce$','$\hat{\sigma}_n$', '$\hat{\sigma}_p$','$\hat{\kappa}$', '$\hat{R}_{f,n}$', '$\hat{R}_{cc}$',...
-    '$\alpha$', '$\hat{k}_{0,n}$', '$\hat{k}_{0,p}$', '$\hat{\varepsilon}_{e,n}$', '$\hat{\varepsilon}_{e,sep}$', '$\hat{\varepsilon}_{e,p}$',...
-    '$h_c$', '$C_p$', '$dU/dT$'};
+%Labels of the parameters in the sensitivity plot are determined per parameter name
+%(see par_label). A cell options.par_names_plot with one label per
+%estimated parameter (in the order of the parameter list) can be provided to override these.
 options.beta_0 = 0.5;
 options.rand_init =0;
 options.n_estimation = 0;
@@ -161,15 +160,9 @@ function [par,results] = estimate_parameters(model,y_exp,equil_data,par_names,ra
 N_par = length(par_names); %number of defined parameters of the model
 
 %Determine the method that defines how the parameters are determined from
-%beta, see Eq. (20) in [1]
-for k = 1:N_par
-    if ranges.([par_names{k},'_max'])/ranges.([par_names{k},'_min']) >= 10 && not(isinf(ranges.([par_names{k},'_max'])/ranges.([par_names{k},'_min'])))
-        methods(k) = 1;
-    else
-        methods(k) = 0;
-    end
-    
-end
+%beta, see Eq. (20) in [1]. All parameters use linear scaling between their
+%minimum and maximum (method 0), i.e., no logarithmic scaling is used.
+methods = zeros(1,N_par);
 
 par = beta2par(0.5*ones(1,N_par),par_names,ranges,methods);
 %Sensitivity analysis
@@ -320,6 +313,30 @@ end
 
 end
 
+function y = nan_to_zero(y)
+%A failed (early terminated) simulation results in NaN, which the objective
+%treats as 0 (a large residual).
+y(isnan(y)) = 0;
+end
+
+function lbl = par_label(name)
+%LaTeX label of a parameter in the sensitivity plot.
+labels = struct('s0_neg','$s_{0,n}$','s0_pos','$s_{0,p}$','s100_neg','$s_{100,n}$','s100_pos','$s_{100,p}$',...
+    'Ds_neg','$\hat{D}_{s,n}$','Ds_pos','$\hat{D}_{s,p}$','De','$\hat{D}_e$',...
+    'p_neg','$\hat{p}_n$','p_sep','$\hat{p}_{sep}$','p_pos','$\hat{p}_p$','t_plus','$t_+^0$',...
+    'sigma_neg','$\hat{\sigma}_n$','sigma_pos','$\hat{\sigma}_p$','kappa','$\hat{\kappa}$',...
+    'Rf_neg','$\hat{R}_{f,n}$','Ds_neg_Ea','$E_{a,D_{s,n}}$','Ds_pos_Ea','$E_{a,D_{s,p}}$',...
+    'knEa','$E_{a,k_{0,n}}$','kpEa','$E_{a,k_{0,p}}$','DEa','$E_{a,D_e}$','alpha','$\alpha$',...
+    'k0_neg','$\hat{k}_{0,n}$','k0_pos','$\hat{k}_{0,p}$',...
+    'epse_neg','$\hat{\varepsilon}_{e,n}$','epse_sep','$\hat{\varepsilon}_{e,sep}$','epse_pos','$\hat{\varepsilon}_{e,p}$',...
+    'dlnfdce','$dlnf/dc_e$','R_cc','$\hat{R}_{cc}$','hc','$h_c$','Cp','$C_p$','V_cell','$V_{cell}$');
+if isfield(labels,name)
+    lbl = labels.(name);
+else
+    lbl = ['$\mathrm{' strrep(name,'_','\_') '}$'];
+end
+end
+
 function w = objective_weights(options,n)
 %Weights of the residual vector of length n. When both the voltage and the
 %temperature are in the objective, the residual is [V T], and the second half
@@ -353,6 +370,14 @@ end
 
 function equil = determine_equilibrium_potentials(equil_data,par,options)
 p = par;
+
+if not(options.equil_mode)
+    %The electrode potentials and stoichiometries are provided in equil_data
+    %(they are not estimated)
+    p.U_neg = equil_data.U_neg; p.U_pos = equil_data.U_pos;
+    p.s0_neg = equil_data.s0_neg; p.s100_neg = equil_data.s100_neg;
+    p.s0_pos = equil_data.s0_pos; p.s100_pos = equil_data.s100_pos;
+end
 
 npoints = 1000;
 x = linspace(0,1,npoints);
@@ -411,6 +436,10 @@ end
 equil.U_neg = p.U_neg_out;
 equil.U_pos = p.U_pos_out;
 equil.Cbat = equil_data.Cbat;
+if not(options.equil_mode)
+    equil.s0_neg = equil_data.s0_neg; equil.s100_neg = equil_data.s100_neg;
+    equil.s0_pos = equil_data.s0_pos; equil.s100_pos = equil_data.s100_pos;
+end
 
 end
 
@@ -429,7 +458,7 @@ if length(input_data)>1
 else
     sens_data=input_data;
 end
-y_nom = model(sens_data,equil,par_nom); %Obtain the model output with the nominal parameters
+y_nom = nan_to_zero(model(sens_data,equil,par_nom)); %Obtain the model output with the nominal parameters (NaN, from a failed simulation, is treated as in the objective)
 
     parfor k = 1:N_par
         if not(options.sens_perturb_mode==1)
@@ -437,7 +466,7 @@ y_nom = model(sens_data,equil,par_nom); %Obtain the model output with the nomina
             beta_perm_low(k) = (0.5-options.sens_perturb);
             par_perm_low = beta2par(beta_perm_low,par_names,ranges,methods);
             equil = determine_equilibrium_potentials(equil_data,par_perm_low,options); %determine the equilibrium potential based on the lower permutation of the parameters
-            y_perm_low{k} = model(sens_data,equil,par_perm_low); %Obtain the model output with the lower permutation of the parameters
+            y_perm_low{k} = nan_to_zero(model(sens_data,equil,par_perm_low)); %Obtain the model output with the lower permutation of the parameters
             dydpar_low(k,:) = -(y_perm_low{k}-y_nom)/options.sens_perturb; %Compute the sensitivity of the model output to the parameters based on the difference between the lower permutation of the parameters and the nominal parameters
         end
         %this section for playing
@@ -447,7 +476,7 @@ y_nom = model(sens_data,equil,par_nom); %Obtain the model output with the nomina
             beta_perm_high(k) = (0.5+options.sens_perturb);
             par_perm_high = beta2par(beta_perm_high,par_names,ranges,methods);
             equil = determine_equilibrium_potentials(equil_data,par_perm_high,options); %determine the equilibrium potential based on the higher permutation of the parameters
-            y_perm_high{k} = model(sens_data,equil,par_perm_high); %Obtain the model output with the higher permutation of the parameters
+            y_perm_high{k} = nan_to_zero(model(sens_data,equil,par_perm_high)); %Obtain the model output with the higher permutation of the parameters
             dydpar_high(k,:) = (y_perm_high{k}-y_nom)/options.sens_perturb; %Compute the sensitivity of the model output to the parameters based on the difference between the higher permutation of the parameters and the nominal parameters
         end
     end
@@ -461,6 +490,7 @@ switch options.sens_perturb_mode
     case 0
         S = 0.5*(dydpar_low+dydpar_high); %Determine the sensitivity of the model output to the parameters are the average of the two computed sensitivities
 end
+S = S.*objective_weights(options,size(S,2)); %same weighting as in the objective (relevant for the V and T objective)
 [Q,R,P] = qr(S');
 
 Pi_init = 1:N_par; %Initial ranking of the parameters
@@ -478,15 +508,13 @@ results_sensitivity.ranked_methods = methods(1:N_par)*P;
 
 if options.plot_sensitivity
     N_par_plot = sum(sensitivity_magnitude>0);
-    if isfield(options,'par_names_plot')
+    if isfield(options,'par_names_plot') && numel(options.par_names_plot)==N_par
         par_names_plot = options.par_names_plot;
-        interpreter = 'latex';
-        fontweight = 'bold';
     else
-        par_names_plot = par_names;
-        interpreter = 'none';
-        fontweight = 'normal';
+        par_names_plot = cellfun(@par_label,par_names,'UniformOutput',false);
     end
+    interpreter = 'latex';
+    fontweight = 'bold';
     
     for k = 1:N_par
         ranked_parnames_plot{k} = par_names_plot{Pi_ranked(k)};
@@ -731,7 +759,7 @@ p.epse_neg_min = 0.0043;
 p.epse_neg_max = 0.42;
 
 p.epse_sep_min = 0.0740;
-p.epse_sep_max = 1;
+p.epse_sep_max = 0.99;
 
 p.epse_pos_min = 0.0053;
 p.epse_pos_max = 0.48;
@@ -746,11 +774,10 @@ p.sigma_neg_max = 1e5;
 p.sigma_pos_min = 0.00352;
 p.sigma_pos_max = 72.5;
 
-p.epss_neg_min = 0.471;
-p.epss_neg_max = 0.650;
-
-p.epss_pos_min = 0.35;
-p.epss_pos_max = 0.5;
+%The solid volume fractions are fixed (same values as in phat2p), such that
+%the grouped ranges of sigma match the conversion in phat2p
+p.epss_neg = 0.53;
+p.epss_pos = 0.51;
 
 p.kappa_min = 7e-6*Cbat;%
 p.kappa_max = 2e-5*Cbat;%
@@ -831,10 +858,10 @@ ph.p_pos_max = p.epse_pos_max/p.delta_pos;
 ph.t_plus_min = p.t_plus_min;
 ph.t_plus_max = p.t_plus_max;
 
-ph.sigma_neg_min = p.sigma_neg_min*p.epss_neg_min*p.A_surf/p.delta_neg;
-ph.sigma_neg_max = p.sigma_neg_max*p.epss_neg_max*p.A_surf/p.delta_neg;
-ph.sigma_pos_min = p.sigma_pos_min*p.epss_pos_min*p.A_surf/p.delta_pos;
-ph.sigma_pos_max = p.sigma_pos_max*p.epss_pos_max*p.A_surf/p.delta_pos;
+ph.sigma_neg_min = p.sigma_neg_min*p.epss_neg*p.A_surf/p.delta_neg;
+ph.sigma_neg_max = p.sigma_neg_max*p.epss_neg*p.A_surf/p.delta_neg;
+ph.sigma_pos_min = p.sigma_pos_min*p.epss_pos*p.A_surf/p.delta_pos;
+ph.sigma_pos_max = p.sigma_pos_max*p.epss_pos*p.A_surf/p.delta_pos;
 
 ph.kappa_min = 7e-6*Cbat;
 ph.kappa_max = 2e-5*Cbat;
@@ -853,15 +880,20 @@ ph.knEa_max = p.knEa_max;
 ph.kpEa_min = p.kpEa_min;
 ph.kpEa_max = p.kpEa_max;
 
-ph.k0_neg_min = p.k0_neg_min*p.ce0/(p.R_neg*p.F);
-ph.k0_neg_max = p.k0_neg_max*p.ce0/(p.R_neg*p.F);
-ph.k0_pos_min = p.k0_pos_min*p.ce0/(p.R_neg*p.F);
-ph.k0_pos_max = p.k0_pos_max*p.ce0/(p.R_neg*p.F);
+% phat2p divides by ce0^alpha, and alpha is estimated, so the lower (upper)
+% bound uses the lower (upper) bound of alpha
+ph.k0_neg_min = p.k0_neg_min*(p.ce0^p.alpa_min)/(p.R_neg*p.F);
+ph.k0_neg_max = p.k0_neg_max*(p.ce0^p.alpa_max)/(p.R_neg*p.F);
+ph.k0_pos_min = p.k0_pos_min*(p.ce0^p.alpa_min)/(p.R_pos*p.F);
+ph.k0_pos_max = p.k0_pos_max*(p.ce0^p.alpa_max)/(p.R_pos*p.F);
 
 ph.epse_neg_min = p.epse_neg_min*p.F*p.A_surf*p.delta_neg*p.ce0/(1-p.t_plus_min);
 ph.epse_neg_max = p.epse_neg_max*p.F*p.A_surf*p.delta_neg*p.ce0/(1-p.t_plus_max);
 ph.epse_sep_min = p.epse_sep_min*p.F*p.A_surf*p.delta_sep*p.ce0/(1-p.t_plus_min);
-ph.epse_sep_max = p.epse_sep_max*p.F*p.A_surf*p.delta_sep*p.ce0/(1-p.t_plus_max);
+% The upper bound of epse_sep uses t_plus_min (instead of t_plus_max) to make
+% sure that epse_sep does not exceed 1, which would happen for t_plus<0.4
+% with t_plus_max
+ph.epse_sep_max = p.epse_sep_max*p.F*p.A_surf*p.delta_sep*p.ce0/(1-p.t_plus_min);
 ph.epse_pos_min = p.epse_pos_min*p.F*p.A_surf*p.delta_pos*p.ce0/(1-p.t_plus_min);
 ph.epse_pos_max = p.epse_pos_max*p.F*p.A_surf*p.delta_pos*p.ce0/(1-p.t_plus_max);
 
