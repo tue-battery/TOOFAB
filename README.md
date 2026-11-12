@@ -80,6 +80,8 @@ Elionai Weldeghebreal (https://www.tue.nl/en/research/researchers/elionai-weldeg
 
 [5] Diaz Aguilar, A. M., Lodge, A. A., & Hoekstra, F. S. J. (2025). Unlocking electrochemical battery modelling: An open-source suite comparison methodology. IFAC-PapersOnLine, 59(5), 169–174. 
 
+[6] E. Weldeghebreal, F. le Roux, M.C.F. Donkers. "Informative experiment design for parameter estimation of the Doyle–Fuller–Newman battery model", in Journal of Energy Storage, 2026.
+
 ## License
 
 This project is licensed under the BSD 3-Clause License - see the [LICENSE.md](LICENSE.md) file for details
