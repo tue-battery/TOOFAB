@@ -16,9 +16,11 @@ Physics-based ageing modeling
 - Option to use a battery ageing model describing the side reactions that lead to Li-ion loss due to the a variety of ageing phenomena. The user can find this in the Cycle_Ageing folder.
 - Option to use a lumped thermal model describing the thermal dynamics.  
 - Ability to efficiently use the model in a closed-loop setting. 
-- Estimate DFN model parameters based on experimental current/voltage data.
+- Estimate DFN model parameters based on experimental current/voltage/temperature data.
 - Step-by-step Basic DFN Model MATLAB livescript
-- Step-by-step Parameter Estimation livescript
+- 2 Step-by-step Parameter Estimation livescript's.  
+- Step-by-step Experiment Design livescript
+  
 
 ### Coming features
 - Improved ageing modeling implementations
